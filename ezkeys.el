@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; ezkeys.el --- Easy syntax for keymaps of highest precedence.  -*- lexical-binding: t -*-
+
+;;; Usage:
+;;
+;; Add the directory containing this file to your `load-path'
+;;
+;; Define a keymap with `ezk-defkeymaps'.
 
 
 ;;;; ===========================================================================
@@ -7,21 +13,6 @@
 (defgroup ezk nil
   "ezk Keymap"
   :group 'ezkeys)
-
-(defcustom ezk-lighter-prefix " ["
-  "The shared prefix for any lighter symbols loaded by ezk"
-  :group 'ezkeys
-  :type 'string)
-
-(defcustom ezk-lighter-suffix "]"
-  "The shared suffix for any lighter symbols loaded by ezk"
-  :group 'ezkeys
-  :type 'string)
-
-(defcustom ezk-no-lighter nil
-  "t if you don't want any ezk lighters displayed"
-  :group 'ezkeys
-  :type 'boolean)
 
 (defun ezk/lat? (form)
   "List of atoms?"
@@ -103,57 +94,27 @@ minor mode was defined for HOOK"
   "Get the ezk mode map generated and added to HOOK."
   (eval (ezk/get-mode-map-name hook)))
 
-(defun ezk/try-get-lighter (hook lighters)
-  "HOOK should not be generated with `ezk/as-explicit-hook'.
-Returns lighter if one is found for either an implicit or
-explicit HOOK."
-(or (alist-get hook lighters)
-    (alist-get (ezk/as-explicit-hook hook)
-               lighters)))
-
-(defun ezk/minor-mode-lighter (hook lighter-middle)
-  (cond (ezk-no-lighter nil)
-        (lighter-middle (concat ezk-lighter-prefix lighter-middle ezk-lighter-suffix))
-        (t ;else, guess lighter-middle to be the first substr before '-' in hook
-         (let* ((hook-name (symbol-name hook))
-                (i (or (string-match-p "-" hook-name)
-                       (length hook-name)))
-                (lighter-middle (substring hook-name 0 i)))
-           (concat ezk-lighter-prefix lighter-middle ezk-lighter-suffix)))))
-
-(defun ezk/define-minor-mode (name lighter)
+(defun ezk/define-minor-mode (name)
   (eval `(define-minor-mode ,name
      "A minor mode defined by `ezkeys'. Purely for internal use."
      nil
-     ,lighter
-     (make-sparse-keymap)  ;behavior of `define-minor-mode' is to setq NAME-map
+     nil                    ;no lighter because it just duplicates information
+     (make-sparse-keymap)   ;behavior of `define-minor-mode' is to setq NAME-map
      )))
 
-(defun ezk/create-modes-and-maps (lighters hooks)
-  "Defines minor modes and maps for each hook. The minor modes
-defined will be run when their respective hook runs. LIGHTERS is
-an alist with each member's car as a hook symbol and each cadr as
-a string to be flanked by `ezk-lighter-prefix' and
-`ezk-lighter-suffix' when the hook runs. HOOKS is a list of
-symbols specifying a hook that should be used to load the ezkeys
-map generated for it. Any members in HOOKS not in LIGHTERS will
-have a lighter guessed for them. Any members in HOOKS with nil as
-their cadr in LIGHTERS won't display any lighter. Set
-`ezk-no-lighter' to disable all lighters."
-  (let ((lighters (mapcar (lambda (form) `(,(ezk/as-explicit-hook (car form)) . ,(cdr form)))
-                          lighters)))
+(defun ezk/create-modes-and-maps (hooks)
+  "Defines minor modes and maps for each hook."
     (mapc (lambda (hook)
             (let* ((mode-name (ezk/minor-mode-sym hook))
-                   (map-name (ezk/minor-mode-map-sym mode-name))
-                   (lighter (ezk/minor-mode-lighter hook (ezk/try-get-lighter hook lighters))))
+                   (map-name (ezk/minor-mode-map-sym mode-name)))
               (unless (assoc mode-name ezk-mode-map-alist)
-                (ezk/define-minor-mode mode-name lighter)
+                (ezk/define-minor-mode mode-name)
                 ;; appends. so the sooner a hook, the higher its precedence
                 (add-to-list 'ezk-mode-map-alist
                              `(,mode-name . ,(eval map-name))
                              t)
                 (add-hook hook mode-name))))
-          (mapcar #'ezk/as-explicit-hook hooks))))
+          (mapcar #'ezk/as-explicit-hook hooks)))
 
 
 ;;;; ===========================================================================
@@ -214,7 +175,7 @@ created for HOOKS by `ezk/create-modes-and-maps' will call FUN."
 ;;;;                                      main 
 
 ;;;###autoload
-(defmacro ezk-defkeymaps (lighters &rest map)
+(defmacro ezk-defkeymaps (&rest map)
   "MAP is any number of forms like:
 ((KEY [KEY]...)... (FUN HOOK [HOOK]...)
 
@@ -233,9 +194,12 @@ similar to defining a key using `global-set-key'. The binding
 will always be available unless some other binding bound to a
 more specific hook exists.
 
+===
+
 Precedence of keymaps
 TODO
 
+===
 
 e.g.
 Where HELLO and GOODBYE are bound to interactive functions
@@ -243,17 +207,57 @@ Where HELLO and GOODBYE are bound to interactive functions
 (ezk-defkeymaps
   (<f9> (C-x C-x C-h (hello GLOBAL))
         (C-x (C-g
-              (goodbye GLOBAL))))
+              (goodbye GLOBAL)
+             (C-g
+              (hello lisp-mode))
+             (C-g C-g
+              (hello c-mode)))))
 
   (<f11> <f10> <f10>
-       ((lambda () (interactive) (message "this is a lisp C-l C-l C-l")) lisp-mode emacs-lisp-mode scheme-mode)
-       ((lambda () (interactive) (message "this is either c or c++ C-l C-l C-l")) c++-mode c-mode))))
+       ((lambda () (interactive) (message \"this is a lisp\")) lisp-mode emacs-lisp-mode scheme-mode)
+       ((lambda () (interactive) (message \"this is either c or c++\")) c++-mode c-mode))))
 
+===
+The above code produces the following behavior.
 
+Anywhere:
+<f9> C-x C-x C-h  => call hello
+
+Anywhere besides lisp-mode and c-mode:
+<f9> C-x C-g      => call goodbye
+
+Only in lisp mode:
+<f9> C-x C-g      => call hello
+*Overrides the GLOBAL binding*
+
+Only in c-mode:
+<f9> C-x C-g C-g  => call hello
+*While it doesn't exactly match the GLOBAL binding, it still
+ overrides it, because the full keysequence has a prefix exactly
+ matching the GLOBAL map's binding.*
+
+In lisp-mode, emacs-lisp-mode or scheme-mode
+
+<f11> <f10> <f10> => call a lambda printing \"this is a lisp\"
+
+In c++-mode or c-mode
+
+<f11> <f10> <f10> => call a lambda printing \"this is either c or c++\"
+===
+
+Note that in the example above, all of the hooks (lisp-mode,
+emacs-lisp-mode, c-mode, etc) are really just symbols bound to
+modes. This only works because all of these \"hooks\" actually
+define a hook with the same name as their mode, but with
+\"-hook\" appended (lisp-mode-hook, emacs-lisp-mode-hook,
+etc.). While this behavior is typical of `define-minor-mode' and
+convention for major modes, it's not guaranteed. For any hooks
+that don't follow this convention, the exact hook needs to be
+given.
 "
   (declare (indent defun))
   `(progn
-     (ezk/create-modes-and-maps ',lighters (ezk/extract-hooks ',map))
+     (ezk/create-modes-and-maps (ezk/extract-hooks ',map))
      (ezk/process-map ',map)
      ;; ensure `_ezk/global' has lowest precedence
      (assoc-delete-all '_ezk/global ezk-mode-map-alist)
@@ -261,46 +265,32 @@ Where HELLO and GOODBYE are bound to interactive functions
      t))
 
 
+(_ezk/global 1)                         ;enable global map when `require'ed
+(provide 'ezkeys)
+
 ;;;; ===========================================================================
 ;;;;                                 example usage 
 
-;; (defun hello ()
-;;   (interactive)
-;;   (message "hello"))
+;; (ezk-defkeymaps
+;;   (<f9> (C-x C-x C-h (hello GLOBAL))
+;;         (C-x (C-g
+;;               (goodbye GLOBAL))
+;;              (C-b
+;;               (something-between GLOBAL))))
 
-;; (defun goodbye ()
-;;   (interactive)
-;;   (message "goodbye"))
-
-;; (defun something-between ()
-;;   (interactive)
-;;   (message "how are you?"))
-
-(ezk-defkeymaps
-  ((c-mode . "C") (scheme-mode . "λ") (lisp-mode-hook . "CL") (emacs-lisp-mode-hook . "EL"))
-
-  (<f9> (C-x C-x C-h (hello GLOBAL))
-        (C-x (C-g
-              (goodbye GLOBAL))
-             (C-b
-              (something-between GLOBAL))))
-
-  (<f11> <f10> <f10>
-       ((lambda () (interactive) (message "this is a lisp C-l C-l C-l")) lisp-mode emacs-lisp-mode scheme-mode)
-       ((lambda () (interactive) (message "this is either c or c++ C-l C-l C-l")) c++-mode c-mode)
-       )
-  )
-
-
+;;   (<f11> <f10> <f10>
+;;        ((lambda () (interactive) (message "this is a lisp C-l C-l C-l")) lisp-mode emacs-lisp-mode scheme-mode)
+;;        ((lambda () (interactive) (message "this is either c or c++ C-l C-l C-l")) c++-mode c-mode)
+;;        )
+;;   )
 
 ;;;; ===========================================================================
 ;;;;                                      todo 
 
+
 ;; 1. Prevent user from redefining a KEYSEQ.MODE-function binding during same
 ;; epoch. A new epoch is created each time `ezk-defkeymaps' is execd. Just use
 ;; `gensym' for epoch.
-
-;; 2. Remove the lighter functionality. It doesn't serve any purpose.
 
 ;; 3. Allow user to set specific precedence levels on a hook by hook
 ;; basis. GLOBAL will always be lowest precedence, but `ezk-defkeymaps' will
@@ -323,6 +313,3 @@ Where HELLO and GOODBYE are bound to interactive functions
 ;; when you get to (K (f hook...)) you will have to know the preceding string of
 ;; keys. Each of these will be parsed `ezk/as-key'. And sent to ezk/construct-keyseq
 
-(_ezk/global 1)                         ;enable global map when `require'ed
-
-(provide 'ezkeys)
