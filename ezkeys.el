@@ -66,11 +66,12 @@ symbol returned is just global"
 include the GLOBAL symbol in its output. Order of hooks returned
 is same as order given in map. Hooks returned may be explicit or
 implicit."
-  (cl-labels ((extract (form)
-                       (cond ((symbolp form) nil)
-                             ((ezk/lat? (cdr form)) (cdr form)) ; (f hook [hook]...)
-                             (t (mapcan #'extract form)))))
-    (delete-dups (remove 'GLOBAL (mapcan #'extract map)))))
+  (let ((map (copy-tree map)))          ;mapcan modifies SEQUENCE
+    (cl-labels ((extract (form)
+                         (cond ((symbolp form) nil)
+                               ((ezk/lat? (cdr form)) (cdr form)) ; (f hook [hook]...)
+                               (t (mapcan #'extract form)))))
+      (delete-dups (remove 'GLOBAL (mapcan #'extract map))))))
 
 (defun ezk/minor-mode-sym (hook)
   "Returns a symbol ezk uses to store the maps made for HOOKs."
