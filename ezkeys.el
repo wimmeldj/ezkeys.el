@@ -59,8 +59,6 @@ symbol returned is just global"
           hook
         (intern (concat hook-name "-hook"))))))
 
-;; TODO: make it so this returns explicit hooks. Pay attention to interning
-;; symbols. I didn't and screwed up when attempting the change.
 (defun ezk/extract-hooks (map)
   "Extracts hooks from the map given to `ezk-defkeymaps'. Doesn't
 include the GLOBAL symbol in its output. Order of hooks returned
@@ -121,41 +119,49 @@ minor mode was defined for HOOK"
 ;;;; ===========================================================================
 ;;;;                     resolve keymaps and add to their modes 
 
-(defvar ezk/seen (obarray-make)
-  "Stores key definitions seen while processing the keymap. Form
-of symbols is HOOK.KEYS, e.g. c-mode-hook.C-xM-a<f10>")
+(defvar ezk/epoch
+  (let ((i 0))
+    (lambda () (incf i))))
 
-(defun ezk/not-defined? (keys hook)
-  "KEYS is a list of key symbols. t if the KEYS and HOOK
-combination has never been given to this function. Otherwise
-nil."
-  (let* ((name (apply #'concat
-                      (symbol-name (ezk/as-explicit-hook hook))
-                      "."
-                      (mapcar #'symbol-name keys)))
-         (defined? (obarray-get ezk/seen name)))
-    (obarray-put ezk/seen name)
-    (not defined?)))
+(defvar ezk/seen '()
+  "An alist where each member is of form
+((HOOK KEYS) . (EPOCH . FUNCTION))")
 
 (defun ezk/kbd (keys)
   "Returns internal emacs representation of KEYS."
   (kbd (apply #'concat (mapcar (lambda (k) (concat (symbol-name k) " ")) ;add space
-                               keys))))
+                          keys))))
 
-(defun ezk/define-key (fun hooks keys)
-  "HOOKS can be implicit or explicit. Makes it so KEYS in maps
-created for HOOKS by `ezk/create-modes-and-maps' will call FUN."
-  (mapc (lambda (hook)
-          (let ((map (ezk/get-mode-map hook))
-                (keys (ezk/kbd keys)))
-            (define-key map keys fun)))
-        hooks))
+(defun ezk/define-keys (fun hooks keys epoch)
+  "HOOKS need not be explicit."
+  (let ((kbd-keys (ezk/kbd keys)))      ;internal key representation
+    (cl-flet* ((define (map hook)
+                 (setf (alist-get (cons hook keys) ezk/seen nil nil #'equal)
+                       (cons epoch fun))
+                 (define-key map kbd-keys fun))
+               (try-redefine (map hook prev-defn)
+                             (let ((prev-epoch (car prev-defn))
+                                   (prev-fun (cdr prev-defn)))
+                               (if (= prev-epoch epoch)
+                                   (display-warning :error
+                                                    (format "Bad key definition. %S on %s already definied to call %s. Ignoring directive to call %s."
+                                                            keys hook prev-fun fun))
+                                 (define map hook))))
+               (define-key (hook)
+                 (let* ((map (ezk/get-mode-map hook))
+                        (k (cons hook keys)) ;`ezk/seen' key
+                        (prev-defn (alist-get k ezk/seen nil nil #'equal)))
+                   (if prev-defn
+                       (try-redefine map hook prev-defn)
+                     (define map hook)))))
+      (mapc #'define-key hooks))))
 
-;; todo: refactor
-(defun ezk/process-form (form keys)
-  "TODO"
+(defun ezk/process-form (form keys epoch)
+  "Used to process each member of the MAP given to
+`ezk-defkeymaps'. Assumes that `ezk/create-modes-and-maps' has
+already been called to allocate the correct modes and maps."
   (cond ((ezk/lat? (cdr form))          ;(f hook [hook]...)
-         (ezk/define-key (car form) (cdr form) keys))
+         (ezk/define-keys (car form) (cdr form) keys epoch))
         (t
          (do ((curr (car form) (car rest))
               (newkeys '())
@@ -163,14 +169,17 @@ created for HOOKS by `ezk/create-modes-and-maps' will call FUN."
              ((listp curr)
               (mapc (lambda (form)
                       (ezk/process-form form
-                                        (concatenate 'list keys newkeys)))
+                                        (concatenate 'list keys newkeys)
+                                        epoch))
                     (cons curr rest)))
            (setq newkeys (append newkeys `(,curr)))))))
 
 (defun ezk/process-map (map)
-  (mapc (lambda (form)
-          (ezk/process-form form '()))
-        map))
+  (let ((epoch (funcall ezk/epoch)))
+    (mapc (lambda (form)
+            (ezk/process-form form '() epoch))
+          map)))
+
 
 ;;;; ===========================================================================
 ;;;;                                      main 
@@ -273,25 +282,21 @@ given.
 ;;;;                                 example usage 
 
 ;; (ezk-defkeymaps
-;;   (<f9> (C-x C-x C-h (hello GLOBAL))
-;;         (C-x (C-g
-;;               (goodbye GLOBAL))
-;;              (C-b
-;;               (something-between GLOBAL))))
-
 ;;   (<f11> <f10> <f10>
-;;        ((lambda () (interactive) (message "this is a lisp C-l C-l C-l")) lisp-mode emacs-lisp-mode scheme-mode)
-;;        ((lambda () (interactive) (message "this is either c or c++ C-l C-l C-l")) c++-mode c-mode)
-;;        )
+;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode emacs-lisp-mode scheme-mode)
+;;        ((lambda () (interactive) (message "+++this is either c or c++")) c++-mode c-mode))
+
+;;   ;; bad defn
+;;   (<f11> <f10> <f10>
+;;          ((lambda () (interactive) (message "override")) python-mode scheme-mode))
+
+;;   (<f9> <f9> <f9> ((lambda () (interactive) (message "a new fun")) lisp-mode))
+
 ;;   )
 
 ;;;; ===========================================================================
 ;;;;                                      todo 
 
-
-;; 1. Prevent user from redefining a KEYSEQ.MODE-function binding during same
-;; epoch. A new epoch is created each time `ezk-defkeymaps' is execd. Just use
-;; `gensym' for epoch.
 
 ;; 3. Allow user to set specific precedence levels on a hook by hook
 ;; basis. GLOBAL will always be lowest precedence, but `ezk-defkeymaps' will

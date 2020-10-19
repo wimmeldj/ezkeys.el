@@ -39,7 +39,7 @@ Where HELLO and GOODBYE are bound to interactive functions
   (<f9> (C-x C-x C-h (hello GLOBAL))
         (C-x (C-g
               (goodbye GLOBAL)
-             (C-g 
+             (C-g
               (hello lisp-mode))
              (C-g C-g
               (hello c-mode)))))
