@@ -14,6 +14,7 @@
   "ezk Keymap"
   :group 'ezkeys)
 
+;; TODO refactor to ezk/terminal-form
 (defun ezk/lat? (form)
   "List of atoms?"
   (cond ((null form) t)
@@ -286,7 +287,7 @@ given.
 ;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode emacs-lisp-mode scheme-mode)
 ;;        ((lambda () (interactive) (message "+++this is either c or c++")) c++-mode c-mode))
 
-;;   ;; bad defn
+;;   ;; bad defn. python good but scheme not because already definied
 ;;   (<f11> <f10> <f10>
 ;;          ((lambda () (interactive) (message "override")) python-mode scheme-mode))
 
@@ -297,6 +298,30 @@ given.
 ;;;; ===========================================================================
 ;;;;                                      todo 
 
+;; `ezk-defkeymaps' almost implements the full functionality of `define-key':
+
+;; DEF is anything that can be a key’s definition:
+;;  nil (means key is undefined in this keymap),
+;;  a command (a Lisp function suitable for interactive calling),
+;;  a string (treated as a keyboard macro),
+;;  a keymap (to define a prefix key),
+;;  a symbol (when the key is looked up, the symbol will stand for its
+;;     function definition, which should at that time be one of the above,
+;;     or another symbol whose function definition is used, etc.),
+;;  a cons (STRING . DEFN), meaning that DEFN is the definition
+;;     (DEFN should be a valid definition in its own right),
+;;  or a cons (MAP . CHAR), meaning use definition of CHAR in keymap MAP,
+;;  or an extended menu item definition.
+;;  (See info node ‘(elisp)Extended Menu Items’.)
+
+
+;; the only exception is where DEF is a string (a keyboard macro)
+
+
+;; emulation layers. Each layer is a mode on `emulation-mode-map-alist'. You can
+;; scroll through layers. Only one layer is active at a time, otherwise would be
+;; too confusing. If an emulation map has multiple layers, you woult want to
+;; actually display a lighter for the currently active mode/layer
 
 ;; 3. Allow user to set specific precedence levels on a hook by hook
 ;; basis. GLOBAL will always be lowest precedence, but `ezk-defkeymaps' will
