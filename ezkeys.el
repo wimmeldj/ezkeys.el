@@ -181,20 +181,64 @@ already been called to allocate the correct modes and maps."
             (ezk/process-form form '() epoch))
           map)))
 
+;;;; ===========================================================================
+;;;;                               preprocess keymap 
+
+(defun ezk/with-sym-replacement (env map)
+  "ENV is an alist where each car is a symbol and each cdr is a
+symbol that can be interpreted by `kbd' when converted to a
+string. This replaces all the symbols in MAP matching cars of env
+with cdrs. e.g. ENV could be ((BS '\\) (DOT '\\.)) etc. so you
+don't have to escape every special symbol with a \\ "
+  (cl-labels ((repl (f)
+                    (cond ((symbolp f)
+                           (alist-get f env
+                                      f nil #'eq))
+                          ;; qdwimmel redefine when we've written `ezk/terminal?' the not null check
+                          ;; should not be necessary then
+                          ((and (not (null (cdr f)))
+                                (ezk/lat? (cdr f)))           ;(DEF HOOK [HOOK]...)
+                           (cons (if (symbolp (car f))
+                                     (alist-get (car f) env
+                                                (car f) nil #'eq)
+                                   (car f))                   ;handle DEF
+                                 (mapcar #'repl (cdr f)))) ;handle hooks
+                          (t (mapcar #'repl f)))))
+    (repl map)))
+
+
 
 ;;;; ===========================================================================
 ;;;;                                      main 
 
 ;;;###autoload
-(defmacro ezk-defkeymaps (&rest map)
-  "MAP is any number of forms like:
-((KEY [KEY]...)... (FUN HOOK [HOOK]...)
+(defmacro ezk-defkeymaps (lexical-env &rest map)
+  "LEXICAL-ENV is an alist where each member's car is a symbol
+and each cdr is an arbitrary sexp. This can be used to bind
+symbols in MAP to values. You may for instance want to use it
+like so:
+
+(
+(BS . \\\\) (QUI . \\?) (TIC . \\#) (DOT . \\.) (Q . \\')
+(BQ . \\`) (PO . \\() (PC . \\)) (SC . \\;)
+(fun . (lambda () (interactive) (message \"hello\")))
+)
+
+Here, symbols that are required to be escaped (e.g. \\, ?, #, ',
+`, etc.) are aliased so that a backslash in a key sequence
+defintion doesn't confuse you. A lambda function is also aliased
+to fun, which might be useful it occurs multiple times in MAP.
+
+===
+
+MAP is any number of forms like:
+((KEY [KEY]...)... (DEF HOOK [HOOK]...)
 
 KEY is a symbol similar to the strings provided to `kbd' (but not
 a string) (e.g. C-x, <f10>, M-x, a, b, c, 1, 2, 3).
 
-FUN is a symbol bound to some interactive function or a
-lambda.
+DEF is any DEF accepted by `define-key'. This is the action that
+the key sequences perform.
 
 HOOK is a name bound to a list of functions to run when some mode
 is turned on (e.g. c-mode-hook). HOOK may also just be a symbol
@@ -202,8 +246,10 @@ bound to a mode (e.g. c-mode). In this case, it's assumed there
 exists a variable `c-mode-hook'. Or hook may be the special
 symbol GLOBAL. Binding a key to a function on the GLOBAL hook is
 similar to defining a key using `global-set-key'. The binding
-will always be available unless some other binding bound to a
-more specific hook exists.
+will be available in all buffers unless some other binding bound
+to a more specific hook exists. In which case, the more specific
+binding overrides the global binding in all buffers that run the
+hooks it's defined on.
 
 ===
 
@@ -267,9 +313,10 @@ that don't follow this convention, the exact hook needs to be
 given.
 "
   (declare (indent defun))
-  `(progn
-     (ezk/create-modes-and-maps (ezk/extract-hooks ',map))
-     (ezk/process-map ',map)
+  `(let ((newmap (ezk/with-sym-replacement ',lexical-env ',map)))
+     (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
+     (ezk/process-map newmap)
+
      ;; ensure `_ezk/global' has lowest precedence
      (assoc-delete-all '_ezk/global ezk-mode-map-alist)
      (add-to-list 'ezk-mode-map-alist '(_ezk/global . ,_ezk/global-map) t)
@@ -282,14 +329,35 @@ given.
 ;;;; ===========================================================================
 ;;;;                                 example usage 
 
+
 ;; (ezk-defkeymaps
+;;   ((BS . \\) (QUI . \?) (TIC . \#) (DOT . \.) (Q . \') (BQ . \`) (PO . \()
+;;    (PC . \)) (SC . \;)
+
+;;    (CL . lisp-mode) (EL . emacs-lisp-mode-hook)
+
+;;    (fun . (lambda () (interactive) (message \"hello\"))))
+  
 ;;   (<f11> <f10> <f10>
-;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode emacs-lisp-mode scheme-mode)
+;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode EL scheme-mode)
 ;;        ((lambda () (interactive) (message "+++this is either c or c++")) c++-mode c-mode))
+;;   (<f11> <f10>
+;;          (SC ((lambda () (interactive) (message "semicolon ; !")) scheme-mode CL))
+;;          (QUI ((lambda () (interactive) (message "question ?")) scheme-mode-hook CL))
+;;          (TIC ((lambda () (interactive) (message "tictac #")) scheme-mode-hook CL))
+;;          (BS ((lambda () (interactive) (message "baskslash \\")) scheme-mode-hook CL))
+;;          (DOT ((lambda () (interactive) (message "dot .")) scheme-mode-hook CL))
+;;          (Q ((lambda () (interactive) (message "quote '")) scheme-mode-hook CL))
+;;          (BQ ((lambda () (interactive) (message "backquote `")) scheme-mode-hook CL))
+;;          (PO ((lambda () (interactive) (message "left paren (")) scheme-mode-hook CL))
+;;          (PC ((lambda () (interactive) (message "right paren )")) scheme-mode-hook CL))
+
+;;          ;; how can we make the above easier to write
+;;          )
 
 ;;   ;; bad defn. python good but scheme not because already definied
-;;   (<f11> <f10> <f10>
-;;          ((lambda () (interactive) (message "override")) python-mode scheme-mode))
+;;   ;; (<f11> <f10> <f10>
+;;   ;;        ((lambda () (interactive) (message "override")) python-mode scheme-mode))
 
 ;;   (<f9> <f9> <f9> ((lambda () (interactive) (message "a new fun")) lisp-mode))
 
