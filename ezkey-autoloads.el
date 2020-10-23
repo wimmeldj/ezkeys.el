@@ -7,14 +7,32 @@
 ;;; Generated autoloads from ezkeys.el
 
 (autoload 'ezk-defkeymaps "ezkeys" "\
+LEXICAL-ENV is an alist where each member's car is a symbol
+and each cdr is an arbitrary sexp. This can be used to bind
+symbols in MAP to values. You may for instance want to use it
+like so:
+
+\(
+\(BS . \\\\) (QUI . \\?) (TIC . \\#) (DOT . \\.) (Q . \\')
+\(BQ . \\`) (PO . \\() (PC . \\)) (SC . \\;)
+\(fun . (lambda () (interactive) (message \"hello\")))
+)
+
+Here, symbols that are required to be escaped (e.g. \\, ?, #, ',
+`, etc.) are aliased so that a backslash in a key sequence
+defintion doesn't confuse you. A lambda function is also aliased
+to fun, which might be useful it occurs multiple times in MAP.
+
+===
+
 MAP is any number of forms like:
-\((KEY [KEY]...)... (FUN HOOK [HOOK]...)
+\((KEY [KEY]...)... (DEF HOOK [HOOK]...)
 
 KEY is a symbol similar to the strings provided to `kbd' (but not
 a string) (e.g. C-x, <f10>, M-x, a, b, c, 1, 2, 3).
 
-FUN is a symbol bound to some interactive function or a
-lambda.
+DEF is any DEF accepted by `define-key'. This is the action that
+the key sequences perform.
 
 HOOK is a name bound to a list of functions to run when some mode
 is turned on (e.g. c-mode-hook). HOOK may also just be a symbol
@@ -22,8 +40,10 @@ bound to a mode (e.g. c-mode). In this case, it's assumed there
 exists a variable `c-mode-hook'. Or hook may be the special
 symbol GLOBAL. Binding a key to a function on the GLOBAL hook is
 similar to defining a key using `global-set-key'. The binding
-will always be available unless some other binding bound to a
-more specific hook exists.
+will be available in all buffers unless some other binding bound
+to a more specific hook exists. In which case, the more specific
+binding overrides the global binding in all buffers that run the
+hooks it's defined on.
 
 ===
 
@@ -86,7 +106,7 @@ convention for major modes, it's not guaranteed. For any hooks
 that don't follow this convention, the exact hook needs to be
 given.
 
-\(fn &rest MAP)" nil t)
+\(fn LEXICAL-ENV &rest MAP)" nil t)
 
 (function-put 'ezk-defkeymaps 'lisp-indent-function 'defun)
 

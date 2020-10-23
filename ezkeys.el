@@ -8,20 +8,6 @@
 
 
 ;;;; ===========================================================================
-;;;;                                custom settings 
-
-(defgroup ezk nil
-  "ezk Keymap"
-  :group 'ezkeys)
-
-;; TODO refactor to ezk/terminal-form
-(defun ezk/lat? (form)
-  "List of atoms?"
-  (cond ((null form) t)
-        ((listp (car form)) nil)
-        (t (ezk/lat? (cdr form)))))
-
-;;;; ===========================================================================
 ;;;;                    emulation mode map alist and global map 
 
 (defvar ezk-mode-map-alist '())
@@ -46,7 +32,38 @@
 
 
 ;;;; ===========================================================================
-;;;;                     create maps and modes and add to hooks 
+;;;;                                     common 
+
+;; TODO refactor to ezk/terminal-form
+(defun ezk/terminal? (form)
+  "t if form is a terminal form (DEF HOOK [HOOK]...). nil
+otherwise. 
+
+A DEF is similar to the DEF in `define-key'. Except that DEF
+cannot be nil. ie.
+
+ a command (a Lisp function suitable for interactive calling),
+ a string (treated as a keyboard macro),
+ a keymap (to define a prefix key),
+ a symbol (when the key is looked up, the symbol will stand for its
+    function definition, which should at that time be one of the above,
+    or another symbol whose function definition is used, etc.),
+ a cons (STRING . DEFN), meaning that DEFN is the definition
+    (DEFN should be a valid definition in its own right),
+ or a cons (MAP . CHAR), meaning use definition of CHAR in keymap MAP,
+ or an extended menu item definition.
+
+"
+  (cl-labels ((lat? (f)
+                    (seq-reduce (lambda (a b) (and (symbolp a) (symbolp b)))
+                                f t)))
+    (let ((def (car form))
+          (hooks (cdr form)))
+      (and (or (functionp def)          ;function symbol or definition
+               (stringp def)            ;keyboard macro
+               (consp def))             ;a number of things
+           (not (null hooks))           ;at least one hook
+           (lat? hooks)))))
 
 (defun ezk/as-explicit-hook (hook)
   "Makes HOOK explicit by guaranteeing it ends in
@@ -59,18 +76,6 @@ symbol returned is just global"
       (if is-explicit
           hook
         (intern (concat hook-name "-hook"))))))
-
-(defun ezk/extract-hooks (map)
-  "Extracts hooks from the map given to `ezk-defkeymaps'. Doesn't
-include the GLOBAL symbol in its output. Order of hooks returned
-is same as order given in map. Hooks returned may be explicit or
-implicit."
-  (let ((map (copy-tree map)))          ;mapcan modifies SEQUENCE
-    (cl-labels ((extract (form)
-                         (cond ((symbolp form) nil)
-                               ((ezk/lat? (cdr form)) (cdr form)) ; (f hook [hook]...)
-                               (t (mapcan #'extract form)))))
-      (delete-dups (remove 'GLOBAL (mapcan #'extract map))))))
 
 (defun ezk/minor-mode-sym (hook)
   "Returns a symbol ezk uses to store the maps made for HOOKs."
@@ -93,6 +98,28 @@ minor mode was defined for HOOK"
 (defun ezk/get-mode-map (hook)
   "Get the ezk mode map generated and added to HOOK."
   (eval (ezk/get-mode-map-name hook)))
+
+(defun ezk/kbd (keys)
+  "Returns internal emacs representation of KEYS."
+  (kbd (apply #'concat (mapcar (lambda (k) (concat (symbol-name k) " ")) ;add space
+                          keys))))
+
+
+;;;; ===========================================================================
+;;;;                     create maps and modes and add to hooks 
+
+(defun ezk/extract-hooks (map)
+  "Extracts hooks from the map given to `ezk-defkeymaps'. Doesn't
+include the GLOBAL symbol in its output. Order of hooks returned
+is same as order given in map. Hooks returned may be explicit or
+implicit."
+  (let ((map (copy-tree map)))          ;mapcan modifies SEQUENCE
+    (cl-labels ((extract (f)
+                         (cond ((symbolp f) nil)
+                               ((ezk/terminal? f) (cdr f)) ; (f hook [hook]...)
+                               (t (mapcan #'extract f)))))
+      (delete-dups (remove 'GLOBAL (mapcan #'extract map))))))
+
 
 (defun ezk/define-minor-mode (name)
   (eval `(define-minor-mode ,name
@@ -128,25 +155,23 @@ minor mode was defined for HOOK"
   "An alist where each member is of form
 ((HOOK KEYS) . (EPOCH . FUNCTION))")
 
-(defun ezk/kbd (keys)
-  "Returns internal emacs representation of KEYS."
-  (kbd (apply #'concat (mapcar (lambda (k) (concat (symbol-name k) " ")) ;add space
-                          keys))))
-
-(defun ezk/define-keys (fun hooks keys epoch)
-  "HOOKS need not be explicit."
+(defun ezk/define-keys (def hooks keys epoch)
+  "HOOKS need not be explicit. KEYS on modes which execute one or
+more HOOKS call DEF. If KEYS are redefined for a given HOOK in
+the same EPOCH, warns and doesn't redefine, but continues
+processing the remainder of the HOOKS."
   (let ((kbd-keys (ezk/kbd keys)))      ;internal key representation
     (cl-flet* ((define (map hook)
                  (setf (alist-get (cons hook keys) ezk/seen nil nil #'equal)
-                       (cons epoch fun))
-                 (define-key map kbd-keys fun))
+                       (cons epoch def))
+                 (define-key map kbd-keys def))
                (try-redefine (map hook prev-defn)
                              (let ((prev-epoch (car prev-defn))
                                    (prev-fun (cdr prev-defn)))
                                (if (= prev-epoch epoch)
                                    (display-warning :error
                                                     (format "Bad key definition. %S on %s already definied to call %s. Ignoring directive to call %s."
-                                                            keys hook prev-fun fun))
+                                                            keys hook prev-fun def))
                                  (define map hook))))
                (define-key (hook)
                  (let* ((map (ezk/get-mode-map hook))
@@ -161,7 +186,7 @@ minor mode was defined for HOOK"
   "Used to process each member of the MAP given to
 `ezk-defkeymaps'. Assumes that `ezk/create-modes-and-maps' has
 already been called to allocate the correct modes and maps."
-  (cond ((ezk/lat? (cdr form))          ;(f hook [hook]...)
+  (cond ((ezk/terminal? form)           ;(f hook [hook]...)
          (ezk/define-keys (car form) (cdr form) keys epoch))
         (t
          (do ((curr (car form) (car rest))
@@ -194,10 +219,7 @@ don't have to escape every special symbol with a \\ "
                     (cond ((symbolp f)
                            (alist-get f env
                                       f nil #'eq))
-                          ;; qdwimmel redefine when we've written `ezk/terminal?' the not null check
-                          ;; should not be necessary then
-                          ((and (not (null (cdr f)))
-                                (ezk/lat? (cdr f)))           ;(DEF HOOK [HOOK]...)
+                          ((ezk/terminal? f) ;(DEF HOOK [HOOK]...)
                            (cons (if (symbolp (car f))
                                      (alist-get (car f) env
                                                 (car f) nil #'eq)
@@ -323,8 +345,11 @@ given.
      t))
 
 
+
 (_ezk/global 1)                         ;enable global map when `require'ed
 (provide 'ezkeys)
+
+
 
 ;;;; ===========================================================================
 ;;;;                                 example usage 
@@ -337,6 +362,7 @@ given.
 ;;    (CL . lisp-mode) (EL . emacs-lisp-mode-hook)
 
 ;;    (fun . (lambda () (interactive) (message \"hello\"))))
+
   
 ;;   (<f11> <f10> <f10>
 ;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode EL scheme-mode)
@@ -351,39 +377,17 @@ given.
 ;;          (BQ ((lambda () (interactive) (message "backquote `")) scheme-mode-hook CL))
 ;;          (PO ((lambda () (interactive) (message "left paren (")) scheme-mode-hook CL))
 ;;          (PC ((lambda () (interactive) (message "right paren )")) scheme-mode-hook CL))
-
-;;          ;; how can we make the above easier to write
 ;;          )
-
 ;;   ;; bad defn. python good but scheme not because already definied
 ;;   ;; (<f11> <f10> <f10>
 ;;   ;;        ((lambda () (interactive) (message "override")) python-mode scheme-mode))
 
-;;   (<f9> <f9> <f9> ((lambda () (interactive) (message "a new fun")) lisp-mode))
-
 ;;   )
+
+
 
 ;;;; ===========================================================================
 ;;;;                                      todo 
-
-;; `ezk-defkeymaps' almost implements the full functionality of `define-key':
-
-;; DEF is anything that can be a key’s definition:
-;;  nil (means key is undefined in this keymap),
-;;  a command (a Lisp function suitable for interactive calling),
-;;  a string (treated as a keyboard macro),
-;;  a keymap (to define a prefix key),
-;;  a symbol (when the key is looked up, the symbol will stand for its
-;;     function definition, which should at that time be one of the above,
-;;     or another symbol whose function definition is used, etc.),
-;;  a cons (STRING . DEFN), meaning that DEFN is the definition
-;;     (DEFN should be a valid definition in its own right),
-;;  or a cons (MAP . CHAR), meaning use definition of CHAR in keymap MAP,
-;;  or an extended menu item definition.
-;;  (See info node ‘(elisp)Extended Menu Items’.)
-
-
-;; the only exception is where DEF is a string (a keyboard macro)
 
 
 ;; emulation layers. Each layer is a mode on `emulation-mode-map-alist'. You can
@@ -403,12 +407,3 @@ given.
 ;;
 ;; this should just involve permantely turning a map's mode on and only adding a
 ;; (mode -1) to the hooks of those in the NOT form.
-
-;; TODO warn user about conflicting keys. ie, warn them when KEYSEQ has already
-;; been defined for HOOK. We cannot guarrantee that there won't be conflicts
-;; when KEYSEQ is defined for two different modes that may be simultaneously
-;; active.
-
-;; when you get to (K (f hook...)) you will have to know the preceding string of
-;; keys. Each of these will be parsed `ezk/as-key'. And sent to ezk/construct-keyseq
-
