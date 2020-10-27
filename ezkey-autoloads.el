@@ -7,29 +7,11 @@
 ;;; Generated autoloads from ezkeys.el
 
 (autoload 'ezk-defkeymaps "ezkeys" "\
-LEXICAL-ENV is an alist where each member's car is a symbol
-and each cdr is an arbitrary sexp. This can be used to bind
-symbols in MAP to values. You may for instance want to use it
-like so:
-
-\(
-\(BS . \\\\) (QUI . \\?) (TIC . \\#) (DOT . \\.) (Q . \\')
-\(BQ . \\`) (PO . \\() (PC . \\)) (SC . \\;)
-\(fun . (lambda () (interactive) (message \"hello\")))
-)
-
-Here, symbols that are required to be escaped (e.g. \\, ?, #, ',
-`, etc.) are aliased so that a backslash in a key sequence
-defintion doesn't confuse you. A lambda function is also aliased
-to fun, which might be useful it occurs multiple times in MAP.
-
-===
-
-MAP is any number of forms like:
+ MAP is any number of forms like:
 \((KEY [KEY]...)... (DEF HOOK [HOOK]...)
 
-KEY is a symbol similar to the strings provided to `kbd' (but not
-a string) (e.g. C-x, <f10>, M-x, a, b, c, 1, 2, 3).
+KEY is a string like the strings provided to `kbd' (eg. \"C-x\"
+\"<f10>\" etc.)
 
 DEF is any DEF accepted by `define-key'. This is the action that
 the key sequences perform.
@@ -47,64 +29,46 @@ hooks it's defined on.
 
 ===
 
-Precedence of keymaps
-TODO
+Precedence of keymaps is somewhat arbitrarily determined. GLOBAL
+is guaranteed to be of lowest precedence because it's obviously
+important for more specific keymaps to override global
+functionality (like `global-set-key'). However, all other keymaps
+currently have their precedence determined by the order in which
+they first occur in MAP. eg.
 
-===
+MAP:
+\(K1 (K2 (DEF A B C))
+    (K3 (DEF B C D)))
+\(K4 (DEF X))
 
-e.g.
-Where HELLO and GOODBYE are bound to interactive functions
+The precedence of the maps above looks like this:
 
-\(ezk-defkeymaps
-  (<f9> (C-x C-x C-h (hello GLOBAL))
-        (C-x (C-g
-              (goodbye GLOBAL)
-             (C-g
-              (hello lisp-mode))
-             (C-g C-g
-              (hello c-mode)))))
+high         low
++----------------
+A B C D X GLOBAL
 
-  (<f11> <f10> <f10>
-       ((lambda () (interactive) (message \"this is a lisp\")) lisp-mode emacs-lisp-mode scheme-mode)
-       ((lambda () (interactive) (message \"this is either c or c++\")) c++-mode c-mode))))
+Because this is the left to right order in which they
+occur. GLOBAL is always defined.
 
-===
-The above code produces the following behavior.
+TODO This might force you to define keys in an unusual way. Say
+`prog-mode' should have lower precedence and `c-mode' and
+`python-mode' should have higher. Since c-mode and python-mode
+won't simultaneously be active, you don't care what their
+precedence is relative to each other.
 
-Anywhere:
-<f9> C-x C-x C-h  => call hello
+If c-mode and prog-mode should share a KEYS DEF combination, they
+might be defined like this.
 
-Anywhere besides lisp-mode and c-mode:
-<f9> C-x C-g      => call goodbye
+\(K K (c-mode prog-mode))
 
-Only in lisp mode:
-<f9> C-x C-g      => call hello
-*Overrides the GLOBAL binding*
+This is fine, but now you have to make sure the first definition
+for python-mode is above this defintion. If it's below, you have
 
-Only in c-mode:
-<f9> C-x C-g C-g  => call hello
-*While it doesn't exactly match the GLOBAL binding, it still
- overrides it, because the full keysequence has a prefix exactly
- matching the GLOBAL map's binding.*
++---------------------------
+c-mode prog-mode python-mode
 
-In lisp-mode, emacs-lisp-mode or scheme-mode
-
-<f11> <f10> <f10> => call a lambda printing \"this is a lisp\"
-
-In c++-mode or c-mode
-
-<f11> <f10> <f10> => call a lambda printing \"this is either c or c++\"
-===
-
-Note that in the example above, all of the hooks (lisp-mode,
-emacs-lisp-mode, c-mode, etc) are really just symbols bound to
-modes. This only works because all of these \"hooks\" actually
-define a hook with the same name as their mode, but with
-\"-hook\" appended (lisp-mode-hook, emacs-lisp-mode-hook,
-etc.). While this behavior is typical of `define-minor-mode' and
-convention for major modes, it's not guaranteed. For any hooks
-that don't follow this convention, the exact hook needs to be
-given.
+This isn't great and user should be able to set explicit
+precedence levels at the mode map level.
 
 \(fn LEXICAL-ENV &rest MAP)" nil t)
 

@@ -57,13 +57,14 @@ cannot be nil. ie.
   (cl-labels ((lat? (f)
                     (seq-reduce (lambda (a b) (and (symbolp a) (symbolp b)))
                                 f t)))
-    (let ((def (car form))
-          (hooks (cdr form)))
-      (and (or (functionp def)          ;function symbol or definition
-               (stringp def)            ;keyboard macro
-               (consp def))             ;a number of things
-           (not (null hooks))           ;at least one hook
-           (lat? hooks)))))
+    (when (listp form)
+      (let ((def (car form))
+            (hooks (cdr form)))
+        (and (or (functionp def)          ;function symbol or definition
+                 (stringp def)            ;keyboard macro
+                 (consp def))             ;a number of things
+             (not (null hooks))           ;at least one hook
+             (lat? hooks))))))
 
 (defun ezk/as-explicit-hook (hook)
   "Makes HOOK explicit by guaranteeing it ends in
@@ -101,9 +102,7 @@ minor mode was defined for HOOK"
 
 (defun ezk/kbd (keys)
   "Returns internal emacs representation of KEYS."
-  (kbd (apply #'concat (mapcar (lambda (k) (concat (symbol-name k) " ")) ;add space
-                          keys))))
-
+  (kbd (mapconcat #'identity keys " ")))
 
 ;;;; ===========================================================================
 ;;;;                     create maps and modes and add to hooks 
@@ -115,7 +114,7 @@ is same as order given in map. Hooks returned may be explicit or
 implicit."
   (let ((map (copy-tree map)))          ;mapcan modifies SEQUENCE
     (cl-labels ((extract (f)
-                         (cond ((symbolp f) nil)
+                         (cond ((stringp f) nil)
                                ((ezk/terminal? f) (cdr f)) ; (f hook [hook]...)
                                (t (mapcan #'extract f)))))
       (delete-dups (remove 'GLOBAL (mapcan #'extract map))))))
@@ -153,7 +152,7 @@ implicit."
 
 (defvar ezk/seen '()
   "An alist where each member is of form
-((HOOK KEYS) . (EPOCH . FUNCTION))")
+((HOOK KEYS) . (EPOCH . DEF))")
 
 (defun ezk/define-keys (def hooks keys epoch)
   "HOOKS need not be explicit. KEYS on modes which execute one or
@@ -162,23 +161,24 @@ the same EPOCH, warns and doesn't redefine, but continues
 processing the remainder of the HOOKS."
   (let ((kbd-keys (ezk/kbd keys)))      ;internal key representation
     (cl-flet* ((define (map hook)
-                 (setf (alist-get (cons hook keys) ezk/seen nil nil #'equal)
+                 ;; overwrites previous definition (guaranteed in different epoch)
+                 (setf (alist-get (cons hook kbd-keys) ezk/seen nil nil #'equal)
                        (cons epoch def))
                  (define-key map kbd-keys def))
-               (try-redefine (map hook prev-defn)
-                             (let ((prev-epoch (car prev-defn))
-                                   (prev-fun (cdr prev-defn)))
+               (try-redefine (map hook prev-epoch-defn)
+                             (let ((prev-epoch (car prev-epoch-defn))
+                                   (prev-action (cdr prev-epoch-defn)))
                                (if (= prev-epoch epoch)
                                    (display-warning :error
                                                     (format "Bad key definition. %S on %s already definied to call %s. Ignoring directive to call %s."
-                                                            keys hook prev-fun def))
+                                                            keys hook prev-action def))
                                  (define map hook))))
                (define-key (hook)
                  (let* ((map (ezk/get-mode-map hook))
-                        (k (cons hook keys)) ;`ezk/seen' key
-                        (prev-defn (alist-get k ezk/seen nil nil #'equal)))
-                   (if prev-defn
-                       (try-redefine map hook prev-defn)
+                        (k (cons hook kbd-keys)) ;`ezk/seen' key
+                        (found (alist-get k ezk/seen nil nil #'equal)))
+                   (if found
+                       (try-redefine map hook found)
                      (define map hook)))))
       (mapc #'define-key hooks))))
 
@@ -209,24 +209,24 @@ already been called to allocate the correct modes and maps."
 ;;;; ===========================================================================
 ;;;;                               preprocess keymap 
 
-(defun ezk/with-sym-replacement (env map)
-  "ENV is an alist where each car is a symbol and each cdr is a
-symbol that can be interpreted by `kbd' when converted to a
-string. This replaces all the symbols in MAP matching cars of env
-with cdrs. e.g. ENV could be ((BS '\\) (DOT '\\.)) etc. so you
-don't have to escape every special symbol with a \\ "
-  (cl-labels ((repl (f)
-                    (cond ((symbolp f)
-                           (alist-get f env
-                                      f nil #'eq))
-                          ((ezk/terminal? f) ;(DEF HOOK [HOOK]...)
-                           (cons (if (symbolp (car f))
-                                     (alist-get (car f) env
-                                                (car f) nil #'eq)
-                                   (car f))                   ;handle DEF
-                                 (mapcar #'repl (cdr f)))) ;handle hooks
-                          (t (mapcar #'repl f)))))
-    (repl map)))
+;; (defun ezk/with-sym-replacement (env map)
+;;   "ENV is an alist where each car is a symbol and each cdr is a
+;; symbol that can be interpreted by `kbd' when converted to a
+;; string. This replaces all the symbols in MAP matching cars of env
+;; with cdrs. e.g. ENV could be ((BS '\\) (DOT '\\.)) etc. so you
+;; don't have to escape every special symbol with a \\ "
+;;   (cl-labels ((repl (f)
+;;                     (cond ((symbolp f)
+;;                            (alist-get f env
+;;                                       f nil #'eq))
+;;                           ((ezk/terminal? f) ;(DEF HOOK [HOOK]...)
+;;                            (cons (if (symbolp (car f))
+;;                                      (alist-get (car f) env
+;;                                                 (car f) nil #'eq)
+;;                                    (car f))                ;handle DEF
+;;                                  (mapcar #'repl (cdr f)))) ;handle hooks
+;;                           (t (mapcar #'repl f)))))
+;;     (repl map)))
 
 
 
@@ -235,29 +235,11 @@ don't have to escape every special symbol with a \\ "
 
 ;;;###autoload
 (defmacro ezk-defkeymaps (lexical-env &rest map)
-  "LEXICAL-ENV is an alist where each member's car is a symbol
-and each cdr is an arbitrary sexp. This can be used to bind
-symbols in MAP to values. You may for instance want to use it
-like so:
-
-(
-(BS . \\\\) (QUI . \\?) (TIC . \\#) (DOT . \\.) (Q . \\')
-(BQ . \\`) (PO . \\() (PC . \\)) (SC . \\;)
-(fun . (lambda () (interactive) (message \"hello\")))
-)
-
-Here, symbols that are required to be escaped (e.g. \\, ?, #, ',
-`, etc.) are aliased so that a backslash in a key sequence
-defintion doesn't confuse you. A lambda function is also aliased
-to fun, which might be useful it occurs multiple times in MAP.
-
-===
-
-MAP is any number of forms like:
+  " MAP is any number of forms like:
 ((KEY [KEY]...)... (DEF HOOK [HOOK]...)
 
-KEY is a symbol similar to the strings provided to `kbd' (but not
-a string) (e.g. C-x, <f10>, M-x, a, b, c, 1, 2, 3).
+KEY is a string like the strings provided to `kbd' (eg. \"C-x\"
+\"<f10>\" etc.)
 
 DEF is any DEF accepted by `define-key'. This is the action that
 the key sequences perform.
@@ -275,67 +257,52 @@ hooks it's defined on.
 
 ===
 
-Precedence of keymaps
-TODO
+Precedence of keymaps is somewhat arbitrarily determined. GLOBAL
+is guaranteed to be of lowest precedence because it's obviously
+important for more specific keymaps to override global
+functionality (like `global-set-key'). However, all other keymaps
+currently have their precedence determined by the order in which
+they first occur in MAP. eg.
 
-===
+MAP:
+(K1 (K2 (DEF A B C))
+    (K3 (DEF B C D)))
+(K4 (DEF X))
 
-e.g.
-Where HELLO and GOODBYE are bound to interactive functions
+The precedence of the maps above looks like this:
 
-(ezk-defkeymaps
-  (<f9> (C-x C-x C-h (hello GLOBAL))
-        (C-x (C-g
-              (goodbye GLOBAL)
-             (C-g
-              (hello lisp-mode))
-             (C-g C-g
-              (hello c-mode)))))
+high         low
++----------------
+A B C D X GLOBAL
 
-  (<f11> <f10> <f10>
-       ((lambda () (interactive) (message \"this is a lisp\")) lisp-mode emacs-lisp-mode scheme-mode)
-       ((lambda () (interactive) (message \"this is either c or c++\")) c++-mode c-mode))))
+Because this is the left to right order in which they
+occur. GLOBAL is always defined.
 
-===
-The above code produces the following behavior.
+TODO This might force you to define keys in an unusual way. Say
+`prog-mode' should have lower precedence and `c-mode' and
+`python-mode' should have higher. Since c-mode and python-mode
+won't simultaneously be active, you don't care what their
+precedence is relative to each other.
 
-Anywhere:
-<f9> C-x C-x C-h  => call hello
+If c-mode and prog-mode should share a KEYS DEF combination, they
+might be defined like this.
 
-Anywhere besides lisp-mode and c-mode:
-<f9> C-x C-g      => call goodbye
+(K K (c-mode prog-mode))
 
-Only in lisp mode:
-<f9> C-x C-g      => call hello
-*Overrides the GLOBAL binding*
+This is fine, but now you have to make sure the first definition
+for python-mode is above this defintion. If it's below, you have
 
-Only in c-mode:
-<f9> C-x C-g C-g  => call hello
-*While it doesn't exactly match the GLOBAL binding, it still
- overrides it, because the full keysequence has a prefix exactly
- matching the GLOBAL map's binding.*
++---------------------------
+c-mode prog-mode python-mode
 
-In lisp-mode, emacs-lisp-mode or scheme-mode
+This isn't great and user should be able to set explicit
+precedence levels at the mode map level.
 
-<f11> <f10> <f10> => call a lambda printing \"this is a lisp\"
-
-In c++-mode or c-mode
-
-<f11> <f10> <f10> => call a lambda printing \"this is either c or c++\"
-===
-
-Note that in the example above, all of the hooks (lisp-mode,
-emacs-lisp-mode, c-mode, etc) are really just symbols bound to
-modes. This only works because all of these \"hooks\" actually
-define a hook with the same name as their mode, but with
-\"-hook\" appended (lisp-mode-hook, emacs-lisp-mode-hook,
-etc.). While this behavior is typical of `define-minor-mode' and
-convention for major modes, it's not guaranteed. For any hooks
-that don't follow this convention, the exact hook needs to be
-given.
 "
   (declare (indent defun))
-  `(let ((newmap (ezk/with-sym-replacement ',lexical-env ',map)))
+  `(let ((newmap ',map)
+          ;; (ezk/with-sym-replacement ',lexical-env ',map))
+         )
      (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
      (ezk/process-map newmap)
 
@@ -364,31 +331,52 @@ given.
 ;;    (fun . (lambda () (interactive) (message \"hello\"))))
 
   
-;;   (<f11> <f10> <f10>
+;;   ("<f11>" "<f10>" "<f10>"
 ;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode EL scheme-mode)
 ;;        ((lambda () (interactive) (message "+++this is either c or c++")) c++-mode c-mode))
-;;   (<f11> <f10>
-;;          (SC ((lambda () (interactive) (message "semicolon ; !")) scheme-mode CL))
-;;          (QUI ((lambda () (interactive) (message "question ?")) scheme-mode-hook CL))
-;;          (TIC ((lambda () (interactive) (message "tictac #")) scheme-mode-hook CL))
-;;          (BS ((lambda () (interactive) (message "baskslash \\")) scheme-mode-hook CL))
-;;          (DOT ((lambda () (interactive) (message "dot .")) scheme-mode-hook CL))
-;;          (Q ((lambda () (interactive) (message "quote '")) scheme-mode-hook CL))
-;;          (BQ ((lambda () (interactive) (message "backquote `")) scheme-mode-hook CL))
-;;          (PO ((lambda () (interactive) (message "left paren (")) scheme-mode-hook CL))
-;;          (PC ((lambda () (interactive) (message "right paren )")) scheme-mode-hook CL))
+;;   ("<f11> <f10>"
+;;          (";" ((lambda () (interactive) (message "semicolon ; !")) scheme-mode CL))
+;;          ("?" ((lambda () (interactive) (message "question ?")) scheme-mode-hook CL))
+;;          ("#" ((lambda () (interactive) (message "tictac #")) scheme-mode-hook CL))
+;;          ("\\" ((lambda () (interactive) (message "baskslash \\")) scheme-mode-hook CL))
+;;          ("." ((lambda () (interactive) (message "dot .")) scheme-mode-hook CL))
+;;          ("'" ((lambda () (interactive) (message "quote '")) scheme-mode-hook CL))
+;;          ("`'" ((lambda () (interactive) (message "backquote `")) scheme-mode-hook CL))
+;;          ("(" ((lambda () (interactive) (message "left paren (")) scheme-mode-hook CL))
+;;          (")" ((lambda () (interactive) (message "right paren )")) scheme-mode-hook CL))
 ;;          )
 ;;   ;; bad defn. python good but scheme not because already definied
-;;   ;; (<f11> <f10> <f10>
-;;   ;;        ((lambda () (interactive) (message "override")) python-mode scheme-mode))
+;;   ("<f11> <f10> <f10>"
+;;          ((lambda () (interactive) (message "override")) python-mode scheme-mode))
 
 ;;   )
 
-
+;; (ezk-defkeymaps ()
+  ;; ("<f11>" "<f10>" ("<f10>" ((lambda () (interactive) (message "hello, dave!")) GLOBAL))))
 
 ;;;; ===========================================================================
 ;;;;                                      todo 
 
+
+;; is there much point to lexical-env now that all the keys are strings? It
+;; might be useful to splice in lists of hooks.
+
+;; eg.
+;; lexical-env: ((G1 . (h1 h2 h3)) (A1 . h4))
+
+;; G1 is a group of hooks: h1 h2 h3, A1 is an alias for a hook
+
+;; map:
+;; ((K [K]... (DEF G1))
+;;  (K [K]... (DEF A1))) same as
+
+;; ((K [K]... (DEF h1 h2 h3))
+;;  (K [K]... (DEF h4)))
+
+
+
+
+;; maybe
 
 ;; emulation layers. Each layer is a mode on `emulation-mode-map-alist'. You can
 ;; scroll through layers. Only one layer is active at a time, otherwise would be
