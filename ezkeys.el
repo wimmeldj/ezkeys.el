@@ -2,18 +2,36 @@
 
 ;;; Usage:
 ;;
-;; Add the directory containing this file to your `load-path'
+;; Add the directory containing this file to your `load-path' and byte compile
+;; optionally.
 ;;
-;; Define a keymap with `ezk-defkeymaps'.
+;; (require 'ezkeys)
+;;
+;; You can edit your keymap by editing the contents file at `ezk-keymap-path'
+;;
 
 
+
+;;;; ===========================================================================
+;;;;                                custom variables 
+
+(defcustom ezk-keymap-path
+  (concat user-emacs-directory "keymap.el")
+  "The path where the keymap file should be stored.
+Can be a file that already exists, nothing will be
+overwritten. Cannot be an `org-mode' file."
+  :group 'ezkeys
+  :type 'file)
+
+
+
 ;;;; ===========================================================================
 ;;;;                    emulation mode map alist and global map 
 
 (defvar ezk-mode-map-alist '())
 
-;; to guarantee `ezk-mode-map-alist' is first on `emulation-mode-map-alists'
-;; after loading so it has highest precedence
+;; FIXME. This doesn't work so well for guaranteeing `ezk-mode-map-alist' has
+;; highest precedence on `emulation-mode-map-alists'
 (setq emulation-mode-map-alists
       (cons 'ezk-mode-map-alist (remove 'ezk-mode-map-alist ;allow multiple loads
                                          emulation-mode-map-alists)))
@@ -31,10 +49,10 @@
   (lambda () (_ezk/minor 1)))                ;on in every buffer
 
 
+
 ;;;; ===========================================================================
 ;;;;                                     common 
 
-;; TODO refactor to ezk/terminal-form
 (defun ezk/terminal? (form)
   "t if form is a terminal form (DEF HOOK [HOOK]...). nil
 otherwise. 
@@ -54,9 +72,10 @@ cannot be nil. ie.
  or an extended menu item definition.
 
 "
-  (cl-labels ((lat? (f)
+  (cl-labels ((lat? (hooks)
                     (seq-reduce (lambda (a b) (and (symbolp a) (symbolp b)))
-                                f t)))
+                                hooks
+                                t)))
     (when (listp form)
       (let ((def (car form))
             (hooks (cdr form)))
@@ -97,13 +116,15 @@ minor mode was defined for HOOK"
   (ezk/minor-mode-map-sym (ezk/minor-mode-sym hook)))
 
 (defun ezk/get-mode-map (hook)
-  "Get the ezk mode map generated and added to HOOK."
+  "Get the actual map generated and added to HOOK."
   (eval (ezk/get-mode-map-name hook)))
 
 (defun ezk/kbd (keys)
   "Returns internal emacs representation of KEYS."
   (kbd (mapconcat #'identity keys " ")))
 
+
+
 ;;;; ===========================================================================
 ;;;;                     create maps and modes and add to hooks 
 
@@ -112,7 +133,7 @@ minor mode was defined for HOOK"
 include the GLOBAL symbol in its output. Order of hooks returned
 is same as order given in map. Hooks returned may be explicit or
 implicit."
-  (let ((map (copy-tree map)))          ;mapcan modifies SEQUENCE
+  (let ((map (copy-tree map)))          ;`mapcan' modifies SEQUENCE
     (cl-labels ((extract (f)
                          (cond ((stringp f) nil)
                                ((ezk/terminal? f) (cdr f)) ; (f hook [hook]...)
@@ -143,6 +164,7 @@ implicit."
           (mapcar #'ezk/as-explicit-hook hooks)))
 
 
+
 ;;;; ===========================================================================
 ;;;;                     resolve keymaps and add to their modes 
 
@@ -195,10 +217,12 @@ already been called to allocate the correct modes and maps."
              ((listp curr)
               (mapc (lambda (form)
                       (ezk/process-form form
-                                        (concatenate 'list keys newkeys)
+                                        ;; (concatenate 'list keys newkeys)
+                                        (append keys newkeys)
                                         epoch))
                     (cons curr rest)))
-           (setq newkeys (append newkeys `(,curr)))))))
+           ;; (setq newkeys (append newkeys `(,curr)))))))
+           (setq newkeys (append newkeys (list curr)))))))
 
 (defun ezk/process-map (map)
   (let ((epoch (funcall ezk/epoch)))
@@ -206,6 +230,8 @@ already been called to allocate the correct modes and maps."
             (ezk/process-form form '() epoch))
           map)))
 
+
+
 ;;;; ===========================================================================
 ;;;;                               preprocess keymap 
 
@@ -229,13 +255,29 @@ already been called to allocate the correct modes and maps."
 ;;     (repl map)))
 
 
+
+;;;; ===========================================================================
+;;;;                         arrange keymaps by precedence 
 
+;; todo
+(defun ezk/order-maps (precedence)
+  "Arranges `ezk-mode-map-alist' to match PRECEDENCE"
+  ;; ensure `_ezk/global' has lowest precedence
+  (assoc-delete-all '_ezk/global ezk-mode-map-alist)
+  (add-to-list 'ezk-mode-map-alist
+               (cons '_ezk/global _ezk/global-map)
+               t))
+
+
+
 ;;;; ===========================================================================
 ;;;;                                      main 
 
 ;;;###autoload
-(defmacro ezk-defkeymaps (lexical-env &rest map)
-  " MAP is any number of forms like:
+(defmacro ezk-defkeymaps (precedence-list substitution-alist &rest map)
+  "Define keymaps allocated on `emulation-mode-map-alists'
+
+MAP is any number of forms like:
 ((KEY [KEY]...)... (DEF HOOK [HOOK]...)
 
 KEY is a string like the strings provided to `kbd' (eg. \"C-x\"
@@ -244,16 +286,15 @@ KEY is a string like the strings provided to `kbd' (eg. \"C-x\"
 DEF is any DEF accepted by `define-key'. This is the action that
 the key sequences perform.
 
-HOOK is a name bound to a list of functions to run when some mode
-is turned on (e.g. c-mode-hook). HOOK may also just be a symbol
-bound to a mode (e.g. c-mode). In this case, it's assumed there
-exists a variable `c-mode-hook'. Or hook may be the special
-symbol GLOBAL. Binding a key to a function on the GLOBAL hook is
-similar to defining a key using `global-set-key'. The binding
-will be available in all buffers unless some other binding bound
-to a more specific hook exists. In which case, the more specific
-binding overrides the global binding in all buffers that run the
-hooks it's defined on.
+HOOK is any ordinary hook, like `c-mode-hook' or
+`lisp-mode-hook'. HOOK may also just be a symbol bound to a
+mode (e.g. c-mode). In this case, it's assumed there exists a
+variable `c-mode-hook'. Or hook may be the special symbol
+GLOBAL. Binding a key to GLOBAL is similar to defining a key
+using `global-set-key'. The binding will be available in all
+buffers unless some other binding bound to a more specific hook
+exists. In which case, the more specific binding overrides the
+global binding in all buffers that run the hooks it's defined on.
 
 ===
 
@@ -277,111 +318,133 @@ A B C D X GLOBAL
 
 Because this is the left to right order in which they
 occur. GLOBAL is always defined.
-
-TODO This might force you to define keys in an unusual way. Say
-`prog-mode' should have lower precedence and `c-mode' and
-`python-mode' should have higher. Since c-mode and python-mode
-won't simultaneously be active, you don't care what their
-precedence is relative to each other.
-
-If c-mode and prog-mode should share a KEYS DEF combination, they
-might be defined like this.
-
-(K K (c-mode prog-mode))
-
-This is fine, but now you have to make sure the first definition
-for python-mode is above this defintion. If it's below, you have
-
-+---------------------------
-c-mode prog-mode python-mode
-
-This isn't great and user should be able to set explicit
-precedence levels at the mode map level.
-
 "
-  (declare (indent defun))
-  `(let ((newmap ',map)
-          ;; (ezk/with-sym-replacement ',lexical-env ',map))
-         )
-     (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
-     (ezk/process-map newmap)
-
-     ;; ensure `_ezk/global' has lowest precedence
-     (assoc-delete-all '_ezk/global ezk-mode-map-alist)
-     (add-to-list 'ezk-mode-map-alist '(_ezk/global . ,_ezk/global-map) t)
+  (declare (indent ezk/tl-indent))
+  `(progn
+     (ezk/create-modes-and-maps (ezk/extract-hooks ',map))
+     (ezk/process-map ',map)
+     (ezk/order-maps ',precedence-list)
      t))
 
 
+;; no indentation at top level
+(defun ezk/tl-indent (_ _) '(0))
 
-(_ezk/global 1)                         ;enable global map when `require'ed
+
+
+;;;; ===========================================================================
+;;;;                                  indentation 
+
+;; so that `ezk-lisp-indent-function' may continue with normal indentation
+(defvar ezk/prev-lisp-indent-function lisp-indent-function)
+
+(defun ezk-lisp-indent-function (pos state)
+  "Locally overrides `lisp-indent-function' in keymap file.
+The only keymap file is at `ezk-keymap-path'."
+  (let* ((begin (car (elt state 9)))
+         (depth (car (save-excursion
+                       (parse-partial-sexp begin pos))))
+         (curr-list-start (elt state 1))
+         (in-ezk-defkeymaps? (when begin
+                               (save-excursion
+                                 (goto-char begin)
+                                 (looking-at "(ezk-defkeymaps")))))
+    (catch 'ret
+      (cl-flet ((default-lisp-indent ()
+                  (funcall ezk/prev-lisp-indent-function pos state))
+                (tl-indent ()
+                           (funcall (get 'ezk-defkeymaps 'lisp-indent-function)
+                                    nil nil)))
+        (when (not in-ezk-defkeymaps?)
+          (throw 'ret (default-lisp-indent)))
+        (when (and in-ezk-defkeymaps? (= depth 1))
+          (throw 'ret (tl-indent)))
+        (cl-flet* ((in-first-param? ()
+                                    (save-excursion
+                                      (goto-char curr-list-start)
+                                      (backward-sexp)
+                                      (= begin (1- (point)))))
+                   (looking-at-symbol? ()
+                                       (looking-at "\\sw\\|\\s_"))
+                   (in-terminal-form? ()
+                                      (save-excursion
+                                        (goto-char curr-list-start)
+                                        (forward-char) ;skip over (
+                                        (forward-sexp)
+                                        (backward-sexp)
+                                        (and (looking-at-symbol?)
+                                             (not (equal (1- (point))
+                                                         begin))
+                                             (not (in-first-param?))))))
+          (when (in-first-param?)
+            (throw 'ret (default-lisp-indent)))
+          (when (in-terminal-form?)
+            (throw 'ret (default-lisp-indent)))
+          (let ((last-balanced-list-pos (condition-case nil
+                                            (scan-lists pos -1 0)
+                                          (t nil))))
+            ;; indent to last balanced list at same depth
+            ;;; ("C-x" "C-y" (def h h)        ("C-x" ("C-y" (def h h))
+            ;;; .............here             .......here
+            (when last-balanced-list-pos
+              (throw 'ret
+                     (save-excursion
+                       (goto-char last-balanced-list-pos)
+                       (current-column)))))
+            ;; align `lisp-body-indent' ahead of last left paren or 1+
+            ;; `lisp-body-indent' ahead of last sexp
+            ;;;                          ("C-x"
+            ;;; ("C-x" "C-y"             ..("C-x"
+            ;;; .......|..here           ..|..here
+            (let ((offset (save-excursion
+                            (goto-char pos)
+                            (backward-sexp)
+                            (if (looking-back "(" (1- (point)))
+                                (current-column)
+                              (1+ (current-column))))))
+              (throw 'ret
+                     (+ offset lisp-body-indent))))))))
+
+
+
+;;;; ===========================================================================
+;;;;                              side effects on load 
+
+;; Defining a specific file to contain the map seems to be the only way to
+;; locally override `lisp-indent-function' - outside of the complexity of
+;; implementing something like MMM-mode, where we could have context sensitive
+;; indentaion /within/ files.
+(unless (file-exists-p ezk-keymap-path)
+  (f-touch ezk-keymap-path))
+(load ezk-keymap-path t)
+
+(add-hook 'find-file-hook #'ezk/on-keymap-file-load)
+(defun ezk/on-keymap-file-load ()
+    (when (equal (expand-file-name ezk-keymap-path)
+                 (expand-file-name (buffer-file-name)))
+      ;; value of `lisp-indent-function' is funcalled by
+      ;; `calculate-lisp-indent'. Locally set so that any effects on performance
+      ;; will only be felt in `ezk-keymap-path'
+      (setq-local lisp-indent-function 'ezk-lisp-indent-function)))
+
+
+
+(_ezk/global 1)
 (provide 'ezkeys)
 
 
 
-;;;; ===========================================================================
-;;;;                                 example usage 
 
 
-;; (ezk-defkeymaps
-;;   ((BS . \\) (QUI . \?) (TIC . \#) (DOT . \.) (Q . \') (BQ . \`) (PO . \()
-;;    (PC . \)) (SC . \;)
-
-;;    (CL . lisp-mode) (EL . emacs-lisp-mode-hook)
-
-;;    (fun . (lambda () (interactive) (message \"hello\"))))
-
-  
-;;   ("<f11>" "<f10>" "<f10>"
-;;        ((lambda () (interactive) (message "+++this is a lisp")) lisp-mode EL scheme-mode)
-;;        ((lambda () (interactive) (message "+++this is either c or c++")) c++-mode c-mode))
-;;   ("<f11> <f10>"
-;;          (";" ((lambda () (interactive) (message "semicolon ; !")) scheme-mode CL))
-;;          ("?" ((lambda () (interactive) (message "question ?")) scheme-mode-hook CL))
-;;          ("#" ((lambda () (interactive) (message "tictac #")) scheme-mode-hook CL))
-;;          ("\\" ((lambda () (interactive) (message "baskslash \\")) scheme-mode-hook CL))
-;;          ("." ((lambda () (interactive) (message "dot .")) scheme-mode-hook CL))
-;;          ("'" ((lambda () (interactive) (message "quote '")) scheme-mode-hook CL))
-;;          ("`'" ((lambda () (interactive) (message "backquote `")) scheme-mode-hook CL))
-;;          ("(" ((lambda () (interactive) (message "left paren (")) scheme-mode-hook CL))
-;;          (")" ((lambda () (interactive) (message "right paren )")) scheme-mode-hook CL))
-;;          )
-;;   ;; bad defn. python good but scheme not because already definied
-;;   ("<f11> <f10> <f10>"
-;;          ((lambda () (interactive) (message "override")) python-mode scheme-mode))
-
-;;   )
-
-;; (ezk-defkeymaps ()
-  ;; ("<f11>" "<f10>" ("<f10>" ((lambda () (interactive) (message "hello, dave!")) GLOBAL))))
-
+
 ;;;; ===========================================================================
 ;;;;                                      todo 
-
-
-;; is there much point to lexical-env now that all the keys are strings? It
-;; might be useful to splice in lists of hooks.
-
-;; eg.
-;; lexical-env: ((G1 . (h1 h2 h3)) (A1 . h4))
-
-;; G1 is a group of hooks: h1 h2 h3, A1 is an alias for a hook
-
-;; map:
-;; ((K [K]... (DEF G1))
-;;  (K [K]... (DEF A1))) same as
-
-;; ((K [K]... (DEF h1 h2 h3))
-;;  (K [K]... (DEF h4)))
-
-
-
-
-;; maybe
 
 ;; emulation layers. Each layer is a mode on `emulation-mode-map-alist'. You can
 ;; scroll through layers. Only one layer is active at a time, otherwise would be
 ;; too confusing. If an emulation map has multiple layers, you woult want to
-;; actually display a lighter for the currently active mode/layer
+;; actually display a lighter for the currently active mode/layer. This could be
+;; used to write an evil-lite minor mode
 
 ;; 3. Allow user to set specific precedence levels on a hook by hook
 ;; basis. GLOBAL will always be lowest precedence, but `ezk-defkeymaps' will
