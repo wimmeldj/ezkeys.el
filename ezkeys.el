@@ -235,24 +235,23 @@ already been called to allocate the correct modes and maps."
 ;;;; ===========================================================================
 ;;;;                               preprocess keymap 
 
-;; (defun ezk/with-sym-replacement (env map)
-;;   "ENV is an alist where each car is a symbol and each cdr is a
-;; symbol that can be interpreted by `kbd' when converted to a
-;; string. This replaces all the symbols in MAP matching cars of env
-;; with cdrs. e.g. ENV could be ((BS '\\) (DOT '\\.)) etc. so you
-;; don't have to escape every special symbol with a \\ "
-;;   (cl-labels ((repl (f)
-;;                     (cond ((symbolp f)
-;;                            (alist-get f env
-;;                                       f nil #'eq))
-;;                           ((ezk/terminal? f) ;(DEF HOOK [HOOK]...)
-;;                            (cons (if (symbolp (car f))
-;;                                      (alist-get (car f) env
-;;                                                 (car f) nil #'eq)
-;;                                    (car f))                ;handle DEF
-;;                                  (mapcar #'repl (cdr f)))) ;handle hooks
-;;                           (t (mapcar #'repl f)))))
-;;     (repl map)))
+(defun ezk/preprocess-map (group-alist map)
+  "Symbols in MAP definitions (DEF HOOK [HOOK]...) `eq' to a car
+in `group-alist' will be replaced by a spliced list specified in
+the cdr. MAP is not modified, but a new map returned."
+  (cl-labels ((repl (f)
+                    (cond ((or (atom f) (stringp f)) f)
+                          ((ezk/terminal? f) ;(DEF HOOK [HOOK]...)
+                           (let (substitues)
+                             (mapc (lambda (symb)
+                                     (setq substitues
+                                           (append substitues
+                                                   (alist-get symb group-alist (list symb)
+                                                              nil #'eq))))
+                                   (cdr f))
+                             `(,(car f) ,@substitues)))
+                          (t (mapcar #'repl f)))))
+    (mapcar #'repl map)))
 
 
 
@@ -274,7 +273,7 @@ already been called to allocate the correct modes and maps."
 ;;;;                                      main 
 
 ;;;###autoload
-(defmacro ezk-defkeymaps (precedence-list substitution-alist &rest map)
+(defmacro ezk-defkeymaps (precedence-list group-alist &rest map)
   "Define keymaps allocated on `emulation-mode-map-alists'
 
 MAP is any number of forms like:
@@ -321,14 +320,15 @@ occur. GLOBAL is always defined.
 "
   (declare (indent ezk/tl-indent))
   `(progn
-     (ezk/create-modes-and-maps (ezk/extract-hooks ',map))
-     (ezk/process-map ',map)
-     (ezk/order-maps ',precedence-list)
-     t))
+     (let ((newmap (ezk/preprocess-map ',group-alist ',map)))
+       (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
+       (ezk/process-map newmap)
+       (ezk/order-maps newmap)
+       t)))
 
 
-;; no indentation at top level
-(defun ezk/tl-indent (_ _) '(0))
+;; little indentation at top level
+(defun ezk/tl-indent (_ _) '(1))
 
 
 
@@ -383,7 +383,8 @@ The only keymap file is at `ezk-keymap-path'."
           (let ((last-balanced-list-pos (condition-case nil
                                             (scan-lists pos -1 0)
                                           (t nil))))
-            ;; indent to last balanced list at same depth
+            ;; indent to last balanced list at same depth. Applies to both MAP
+            ;; and GROUP-ALIST. FIXME: should use default-lisp-indent
             ;;; ("C-x" "C-y" (def h h)        ("C-x" ("C-y" (def h h))
             ;;; .............here             .......here
             (when last-balanced-list-pos
@@ -391,19 +392,19 @@ The only keymap file is at `ezk-keymap-path'."
                      (save-excursion
                        (goto-char last-balanced-list-pos)
                        (current-column)))))
-            ;; align `lisp-body-indent' ahead of last left paren or 1+
-            ;; `lisp-body-indent' ahead of last sexp
-            ;;;                          ("C-x"
-            ;;; ("C-x" "C-y"             ..("C-x"
-            ;;; .......|..here           ..|..here
-            (let ((offset (save-excursion
-                            (goto-char pos)
-                            (backward-sexp)
-                            (if (looking-back "(" (1- (point)))
-                                (current-column)
-                              (1+ (current-column))))))
-              (throw 'ret
-                     (+ offset lisp-body-indent))))))))
+          ;; align `lisp-body-indent' ahead of last left paren or 1+
+          ;; `lisp-body-indent' ahead of last sexp
+          ;;;                          ("C-x"
+          ;;; ("C-x" "C-y"             ..("C-x"
+          ;;; .......|..here           ..|..here
+          (let ((offset (save-excursion
+                          (goto-char pos)
+                          (backward-sexp)
+                          (if (looking-back "(" (1- (point)))
+                              (current-column)
+                            (1+ (current-column))))))
+            (throw 'ret
+                   (+ offset lisp-body-indent))))))))
 
 
 
@@ -458,3 +459,15 @@ The only keymap file is at `ezk-keymap-path'."
 ;;
 ;; this should just involve permantely turning a map's mode on and only adding a
 ;; (mode -1) to the hooks of those in the NOT form.
+
+;; interactive definitions of keymaps. Execute command, type in key sequence,
+;; tab inserts a list group. When finished, updates precedence if necessary.
+
+;; eg
+;; (ezk-insert-key)
+;; Type key sequence. tab when done: C-x or C-x M-s, or <f10>, etc
+;; <tab> => ("C-x" "M-s" (|))
+;; type another key sequence or a definition. Tab when done.
+;; :defn hook hook or group
+;; <tab> => ("C-x" "M-s" (def hook hook group))
+;; (ezk-update-precedence-list)
