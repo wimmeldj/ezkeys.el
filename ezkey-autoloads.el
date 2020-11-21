@@ -7,7 +7,9 @@
 ;;; Generated autoloads from ezkeys.el
 
 (autoload 'ezk-defkeymaps "ezkeys" "\
- MAP is any number of forms like:
+Define keymaps allocated on `emulation-mode-map-alists'
+
+MAP is any number of forms like:
 \((KEY [KEY]...)... (DEF HOOK [HOOK]...)
 
 KEY is a string like the strings provided to `kbd' (eg. \"C-x\"
@@ -16,63 +18,51 @@ KEY is a string like the strings provided to `kbd' (eg. \"C-x\"
 DEF is any DEF accepted by `define-key'. This is the action that
 the key sequences perform.
 
-HOOK is a name bound to a list of functions to run when some mode
-is turned on (e.g. c-mode-hook). HOOK may also just be a symbol
-bound to a mode (e.g. c-mode). In this case, it's assumed there
-exists a variable `c-mode-hook'. Or hook may be the special
-symbol GLOBAL. Binding a key to a function on the GLOBAL hook is
-similar to defining a key using `global-set-key'. The binding
-will be available in all buffers unless some other binding bound
-to a more specific hook exists. In which case, the more specific
-binding overrides the global binding in all buffers that run the
-hooks it's defined on.
+HOOK is any ordinary hook, like `c-mode-hook' or
+`lisp-mode-hook' (explicit). HOOK may also just be a symbol bound
+to a mode - e.g. c-mode - (implicit). In this case, it's assumed
+that the hook corresponding to `c-mode' has the standard name,
+i.e. `c-mode-hook'.
+
+Additionally, a hook may be the special symbol GLOBAL. Binding a
+key to GLOBAL is similar to defining a key using
+`global-set-key'. The binding will be available in all buffers
+unless some other binding bound to a more specific hook
+exists. In which case, the more specific binding overrides the
+global binding in all buffers that run the hooks it's defined on.
 
 ===
 
-Precedence of keymaps is somewhat arbitrarily determined. GLOBAL
-is guaranteed to be of lowest precedence because it's obviously
-important for more specific keymaps to override global
-functionality (like `global-set-key'). However, all other keymaps
-currently have their precedence determined by the order in which
-they first occur in MAP. eg.
+GROUP-ALIST can be used to name a list of modes in a keymap
+terminal form: (DEF HOOK [HOOK]...)
 
-MAP:
-\(K1 (K2 (DEF A B C))
-    (K3 (DEF B C D)))
-\(K4 (DEF X))
+For instance, if GROUP-ALIST was
 
-The precedence of the maps above looks like this:
+\((LISP lisp-mode scheme-mode emacs-lisp-mode-hook))
 
-high         low
-+----------------
-A B C D X GLOBAL
+Any terminal form that uses LISP as a hook, will apply the keymap
+definition to all of the \"hooks\" in the cdr of the alist
+member. In this case,
 
-Because this is the left to right order in which they
-occur. GLOBAL is always defined.
+\(DEF LISP)
+= (DEF lisp-mode scheme-mode emacs-lisp-mode-hook)
+= (DEF lisp-mode-hook scheme-mode-hook emacs-lisp-mode-hook)
 
-TODO This might force you to define keys in an unusual way. Say
-`prog-mode' should have lower precedence and `c-mode' and
-`python-mode' should have higher. Since c-mode and python-mode
-won't simultaneously be active, you don't care what their
-precedence is relative to each other.
+You can use any number of these group aliases in a terminal form.
 
-If c-mode and prog-mode should share a KEYS DEF combination, they
-might be defined like this.
+===
 
-\(K K (c-mode prog-mode))
+Hooks appearing earlier in PRECEDENCE-LIST have higher precedence
+than those appearing later. So in the case that two modes are
+active that bind the same key, the one appearing earlier in
+PRECEDENCE-LIST will have its action taken. Any hook not included
+in PRECEDENCE-LIST has a lower precedence than those
+mentioned. This applies to all hooks except GLOBAL, which always
+has the lowest precedence.
 
-This is fine, but now you have to make sure the first definition
-for python-mode is above this defintion. If it's below, you have
+\(fn PRECEDENCE-LIST GROUP-ALIST &rest MAP)" nil t)
 
-+---------------------------
-c-mode prog-mode python-mode
-
-This isn't great and user should be able to set explicit
-precedence levels at the mode map level.
-
-\(fn LEXICAL-ENV &rest MAP)" nil t)
-
-(function-put 'ezk-defkeymaps 'lisp-indent-function 'defun)
+(function-put 'ezk-defkeymaps 'lisp-indent-function 'ezk/tl-indent)
 
 (if (fboundp 'register-definition-prefixes) (register-definition-prefixes "ezkeys" '("_ezk/" "ezk")))
 

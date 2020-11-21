@@ -217,11 +217,9 @@ already been called to allocate the correct modes and maps."
              ((listp curr)
               (mapc (lambda (form)
                       (ezk/process-form form
-                                        ;; (concatenate 'list keys newkeys)
                                         (append keys newkeys)
                                         epoch))
                     (cons curr rest)))
-           ;; (setq newkeys (append newkeys `(,curr)))))))
            (setq newkeys (append newkeys (list curr)))))))
 
 (defun ezk/process-map (map)
@@ -261,11 +259,15 @@ the cdr. MAP is not modified, but a new map returned."
 ;; todo
 (defun ezk/order-maps (precedence)
   "Arranges `ezk-mode-map-alist' to match PRECEDENCE"
-  ;; ensure `_ezk/global' has lowest precedence
-  (assoc-delete-all '_ezk/global ezk-mode-map-alist)
-  (add-to-list 'ezk-mode-map-alist
-               (cons '_ezk/global _ezk/global-map)
-               t))
+  (let* ((precedence (remove 'GLOBAL precedence)) ;no explicit precedence of GLOBAL allowed
+         (reversed (reverse precedence))
+         (ordered (copy-tree ezk-mode-map-alist)))
+    (mapc (lambda (mode)
+            (let ((map (alist-get mode ordered)))
+              (setq ordered (assoc-delete-all mode ordered))
+              (push (cons mode map) ordered)))
+          (mapcar 'ezk/minor-mode-sym reversed))
+    ordered))
 
 
 
@@ -286,46 +288,57 @@ DEF is any DEF accepted by `define-key'. This is the action that
 the key sequences perform.
 
 HOOK is any ordinary hook, like `c-mode-hook' or
-`lisp-mode-hook'. HOOK may also just be a symbol bound to a
-mode (e.g. c-mode). In this case, it's assumed there exists a
-variable `c-mode-hook'. Or hook may be the special symbol
-GLOBAL. Binding a key to GLOBAL is similar to defining a key
-using `global-set-key'. The binding will be available in all
-buffers unless some other binding bound to a more specific hook
+`lisp-mode-hook' (explicit). HOOK may also just be a symbol bound
+to a mode - e.g. c-mode - (implicit). In this case, it's assumed
+that the hook corresponding to `c-mode' has the standard name,
+i.e. `c-mode-hook'.
+
+Additionally, a hook may be the special symbol GLOBAL. Binding a
+key to GLOBAL is similar to defining a key using
+`global-set-key'. The binding will be available in all buffers
+unless some other binding bound to a more specific hook
 exists. In which case, the more specific binding overrides the
 global binding in all buffers that run the hooks it's defined on.
 
 ===
 
-Precedence of keymaps is somewhat arbitrarily determined. GLOBAL
-is guaranteed to be of lowest precedence because it's obviously
-important for more specific keymaps to override global
-functionality (like `global-set-key'). However, all other keymaps
-currently have their precedence determined by the order in which
-they first occur in MAP. eg.
+GROUP-ALIST can be used to name a list of modes in a keymap
+terminal form: (DEF HOOK [HOOK]...)
 
-MAP:
-(K1 (K2 (DEF A B C))
-    (K3 (DEF B C D)))
-(K4 (DEF X))
+For instance, if GROUP-ALIST was
 
-The precedence of the maps above looks like this:
+((LISP lisp-mode scheme-mode emacs-lisp-mode-hook))
 
-high         low
-+----------------
-A B C D X GLOBAL
+Any terminal form that uses LISP as a hook, will apply the keymap
+definition to all of the \"hooks\" in the cdr of the alist
+member. In this case,
 
-Because this is the left to right order in which they
-occur. GLOBAL is always defined.
+(DEF LISP)
+= (DEF lisp-mode scheme-mode emacs-lisp-mode-hook)
+= (DEF lisp-mode-hook scheme-mode-hook emacs-lisp-mode-hook)
+
+You can use any number of these group aliases in a terminal form.
+
+===
+
+Hooks appearing earlier in PRECEDENCE-LIST have higher precedence
+than those appearing later. So in the case that two modes are
+active that bind the same key, the one appearing earlier in
+PRECEDENCE-LIST will have its action taken. Any hook not included
+in PRECEDENCE-LIST has a lower precedence than those
+mentioned. This applies to all hooks except GLOBAL, which always
+has the lowest precedence.
 "
   (declare (indent ezk/tl-indent))
   `(progn
      (let ((newmap (ezk/preprocess-map ',group-alist ',map)))
        (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
        (ezk/process-map newmap)
-       (ezk/order-maps newmap)
+       (setq ezk-mode-map-alist (ezk/order-maps ',precedence-list))
+       ;; ensure `_ezk/global' has lowest precedence
+       (setq ezk-mode-map-alist (assoc-delete-all '_ezk/global ezk-mode-map-alist))
+       (setq ezk-mode-map-alist (add-to-list 'ezk-mode-map-alist (cons '_ezk/global _ezk/global-map) t))
        t)))
-
 
 ;; little indentation at top level
 (defun ezk/tl-indent (_ _) '(1))
@@ -446,13 +459,6 @@ The only keymap file is at `ezk-keymap-path'."
 ;; too confusing. If an emulation map has multiple layers, you woult want to
 ;; actually display a lighter for the currently active mode/layer. This could be
 ;; used to write an evil-lite minor mode
-
-;; 3. Allow user to set specific precedence levels on a hook by hook
-;; basis. GLOBAL will always be lowest precedence, but `ezk-defkeymaps' will
-;; take in a precedence plist. Like (c-mode 1 scheme-mode 2 some-other-mode
-;; 99). The closer the number to 1, the higher the precedence. All modes not
-;; definied in PRECEDENCE will be assumed to be lower.
-
 
 ;; what if to the GLOBAL symbol we added optional expressions like: (not HOOK)
 ;; (not HOOK2) ... meaning, this binding in GLOBAL but not HOOK nor HOOK2
