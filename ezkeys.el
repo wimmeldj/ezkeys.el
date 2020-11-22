@@ -16,10 +16,8 @@
 ;;;;                                custom variables 
 
 (defcustom ezk-keymap-path
-  (concat user-emacs-directory "keymap.el")
-  "The path where the keymap file should be stored.
-Can be a file that already exists, nothing will be
-overwritten. Cannot be an `org-mode' file."
+  (concat user-emacs-directory "keymap")
+  "The path where the keymap file should be stored."
   :group 'ezkeys
   :type 'file)
 
@@ -28,26 +26,25 @@ overwritten. Cannot be an `org-mode' file."
 ;;;; ===========================================================================
 ;;;;                    emulation mode map alist and global map 
 
-(defvar ezk-mode-map-alist '())
+;; (defvar _ezk/global-map (make-sparse-keymap))
+
+(define-minor-mode _ezk/minor
+  "ezk"
+  :init-value t
+  :lighter " ezk")
+
+(define-globalized-minor-mode _ezk/global
+  _ezk/minor
+  (lambda () (_ezk/minor 1)))                ;on in every buffer
+
+;; GLOBAL always exists and will always be last
+(defvar ezk-mode-map-alist `((_ezk/global . ,(make-sparse-keymap))))
 
 ;; FIXME. This doesn't work so well for guaranteeing `ezk-mode-map-alist' has
 ;; highest precedence on `emulation-mode-map-alists'
 (setq emulation-mode-map-alists
       (cons 'ezk-mode-map-alist (remove 'ezk-mode-map-alist ;allow multiple loads
                                          emulation-mode-map-alists)))
-
-(defvar _ezk/global-map (make-sparse-keymap))
-
-(define-minor-mode _ezk/minor
-  "ezk"
-  :init-value t
-  :lighter " ezk"
-  :keymap _ezk/global-map)
-
-(define-globalized-minor-mode _ezk/global
-  _ezk/minor
-  (lambda () (_ezk/minor 1)))                ;on in every buffer
-
 
 
 ;;;; ===========================================================================
@@ -105,19 +102,9 @@ symbol returned is just global"
     (intern (format "_ezk/%s-minor-mode"
                     (symbol-name (ezk/as-explicit-hook hook))))))
 
-(defun ezk/minor-mode-map-sym (minor-mode-name)
-  "Name returned is based on defined behavior of
-`define-minor-mode'."
-  (intern (format "%s-map" (symbol-name minor-mode-name))))
-
-(defun ezk/get-mode-map-name (hook)
-  "Convenience function. Returns the keymap created when an ezk
-minor mode was defined for HOOK"
-  (ezk/minor-mode-map-sym (ezk/minor-mode-sym hook)))
-
 (defun ezk/get-mode-map (hook)
-  "Get the actual map generated and added to HOOK."
-  (eval (ezk/get-mode-map-name hook)))
+  "Get the map corresponding to the ezk mode created for HOOK"
+  (alist-get (ezk/minor-mode-sym hook) ezk-mode-map-alist))
 
 (defun ezk/kbd (keys)
   "Returns internal emacs representation of KEYS."
@@ -140,28 +127,30 @@ implicit."
                                (t (mapcan #'extract f)))))
       (delete-dups (remove 'GLOBAL (mapcan #'extract map))))))
 
-
 (defun ezk/define-minor-mode (name)
   (eval `(define-minor-mode ,name
-     "A minor mode defined by `ezkeys'. Purely for internal use."
-     nil
-     nil                    ;no lighter because it just duplicates information
-     (make-sparse-keymap)   ;behavior of `define-minor-mode' is to setq NAME-map
-     )))
+     "A minor mode defined by `ezkeys' for use not by you.")))
 
 (defun ezk/create-modes-and-maps (hooks)
-  "Defines minor modes and maps for each hook."
+  "Defines minor modes and maps for each hook.
+
+For any hook that is already represented on `ezk-mode-map-alist',
+the keymap is wiped so that the latest call to `ezk-defkeymaps'
+reflects the state of `ezk-mode-map-alist'."
+  (cl-flet ((wipe-keymap (hook)
+                         (setf (alist-get (ezk/minor-mode-sym hook) ezk-mode-map-alist)
+                               (make-sparse-keymap))))
+    ;; GLOBAL is always defined, so it must be cleared
+    (wipe-keymap 'GLOBAL)
     (mapc (lambda (hook)
-            (let* ((mode-name (ezk/minor-mode-sym hook))
-                   (map-name (ezk/minor-mode-map-sym mode-name)))
-              (unless (assoc mode-name ezk-mode-map-alist)
-                (ezk/define-minor-mode mode-name)
-                ;; appends. so the sooner a hook, the higher its precedence
-                (add-to-list 'ezk-mode-map-alist
-                             `(,mode-name . ,(eval map-name))
-                             t)
-                (add-hook hook mode-name))))
-          (mapcar #'ezk/as-explicit-hook hooks)))
+            (let* ((minor-mode-sym (ezk/minor-mode-sym hook)))
+              (if (assoc minor-mode-sym ezk-mode-map-alist)
+                  (wipe-keymap hook)
+                (ezk/define-minor-mode minor-mode-sym)
+                (add-to-list 'ezk-mode-map-alist (cons minor-mode-sym (make-sparse-keymap)))
+                ;; the hook triggers the ezk-specific minor mode
+                (add-hook hook minor-mode-sym))))
+          (mapcar #'ezk/as-explicit-hook hooks))))
 
 
 
@@ -186,23 +175,23 @@ processing the remainder of the HOOKS."
                  ;; overwrites previous definition (guaranteed in different epoch)
                  (setf (alist-get (cons hook kbd-keys) ezk/seen nil nil #'equal)
                        (cons epoch def))
-                 (define-key map kbd-keys def))
+                 (define-key map  kbd-keys def))
                (try-redefine (map hook prev-epoch-defn)
                              (let ((prev-epoch (car prev-epoch-defn))
                                    (prev-action (cdr prev-epoch-defn)))
                                (if (= prev-epoch epoch)
                                    (display-warning :error
-                                                    (format "Bad key definition. %S on %s already definied to call %s. Ignoring directive to call %s."
+                                                    (format "Bad key definition. %S on %s already defined to call %s. Ignoring directive to call %s."
                                                             keys hook prev-action def))
-                                 (define map hook))))
-               (define-key (hook)
-                 (let* ((map (ezk/get-mode-map hook))
-                        (k (cons hook kbd-keys)) ;`ezk/seen' key
-                        (found (alist-get k ezk/seen nil nil #'equal)))
-                   (if found
-                       (try-redefine map hook found)
-                     (define map hook)))))
-      (mapc #'define-key hooks))))
+                                 (define map hook)))))
+      (mapc (lambda (hook)
+              (let* ((map (ezk/get-mode-map hook))
+                     (k (cons hook kbd-keys)) ;`ezk/seen' key
+                     (found (alist-get k ezk/seen nil nil #'equal)))
+                (if found
+                    (try-redefine map hook found)
+                  (define map hook))))
+            hooks))))
 
 (defun ezk/process-form (form keys epoch)
   "Used to process each member of the MAP given to
@@ -256,7 +245,6 @@ the cdr. MAP is not modified, but a new map returned."
 ;;;; ===========================================================================
 ;;;;                         arrange keymaps by precedence 
 
-;; todo
 (defun ezk/order-maps (precedence)
   "Arranges `ezk-mode-map-alist' to match PRECEDENCE"
   (let* ((precedence (remove 'GLOBAL precedence)) ;no explicit precedence of GLOBAL allowed
@@ -266,7 +254,7 @@ the cdr. MAP is not modified, but a new map returned."
             (let ((map (alist-get mode ordered)))
               (setq ordered (assoc-delete-all mode ordered))
               (push (cons mode map) ordered)))
-          (mapcar 'ezk/minor-mode-sym reversed))
+          (mapcar #'ezk/minor-mode-sym reversed))
     ordered))
 
 
@@ -332,12 +320,12 @@ has the lowest precedence.
   (declare (indent ezk/tl-indent))
   `(progn
      (let ((newmap (ezk/preprocess-map ',group-alist ',map)))
+       ;; creates modes and maps and store on `ezk-mode-map-alist'
        (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
+       ;; parse the keymap and store it in `ezk-mode-map-alist'
        (ezk/process-map newmap)
+       ;; reorder `ezk-mode-map-alist' to respect PRECEDENCE-LIST
        (setq ezk-mode-map-alist (ezk/order-maps ',precedence-list))
-       ;; ensure `_ezk/global' has lowest precedence
-       (setq ezk-mode-map-alist (assoc-delete-all '_ezk/global ezk-mode-map-alist))
-       (setq ezk-mode-map-alist (add-to-list 'ezk-mode-map-alist (cons '_ezk/global _ezk/global-map) t))
        t)))
 
 ;; little indentation at top level
@@ -429,8 +417,13 @@ The only keymap file is at `ezk-keymap-path'."
 ;; implementing something like MMM-mode, where we could have context sensitive
 ;; indentaion /within/ files.
 (unless (file-exists-p ezk-keymap-path)
-  (f-touch ezk-keymap-path))
-(load ezk-keymap-path t)
+  (f-touch ezk-keymap-path)
+  (write-region "\
+;;;; -*- mode: emacs-lisp; -*-
+;;;; EZKEYS Keymap File"
+              nil
+              ezk-keymap-path))
+(load ezk-keymap-path t)                ;consider something else
 
 (add-hook 'find-file-hook #'ezk/on-keymap-file-load)
 (defun ezk/on-keymap-file-load ()
