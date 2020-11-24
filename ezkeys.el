@@ -337,7 +337,8 @@ has the lowest precedence.
                (apply ezk-emacs-mode-sym 1 nil)
              (and (fboundp ezk-emacs-mode-sym)
                   (apply ezk-emacs-mode-sym -1 nil)))))
-       t)))
+
+       (provide 'ezk-keymap))))
 
 ;; little indentation at top level
 (defun ezk/tl-indent (_ _) '(1))
@@ -423,10 +424,6 @@ The only keymap file is at `ezk-keymap-path'."
 ;;;; ===========================================================================
 ;;;;                              side effects on load 
 
-;; Defining a specific file to contain the map seems to be the only way to
-;; locally override `lisp-indent-function' - outside of the complexity of
-;; implementing something like MMM-mode, where we could have context sensitive
-;; indentaion /within/ files.
 (unless (file-exists-p ezk-keymap-path)
   (f-touch ezk-keymap-path)
   (write-region "\
@@ -434,7 +431,6 @@ The only keymap file is at `ezk-keymap-path'."
 ;;;; EZKEYS Keymap File"
               nil
               ezk-keymap-path))
-(load ezk-keymap-path t)                ;consider something else
 
 (add-hook 'find-file-hook #'ezk/on-keymap-file-load)
 (defun ezk/on-keymap-file-load ()
@@ -445,9 +441,20 @@ The only keymap file is at `ezk-keymap-path'."
       ;; will only be felt in `ezk-keymap-path'
       (setq-local lisp-indent-function 'ezk-lisp-indent-function)))
 
-
+;; so indentation changes take effect even if loaded in current buffer
+(when (equal (buffer-file-name) (expand-file-name ezk-keymap-path))
+  (setq-local lisp-indent-function 'ezk-lisp-indent-function))
 
 (_ezk/global 1)
+
+
+
+;; only once
+(unless (boundp 'ezk-loaded)
+  (defvar ezk-loaded t)
+  (require 'ezk-keymap ezk-keymap-path))
+
+
 (provide 'ezkeys)
 
 
@@ -481,3 +488,22 @@ The only keymap file is at `ezk-keymap-path'."
 ;; :defn hook hook or group
 ;; <tab> => ("C-x" "M-s" (def hook hook group))
 ;; (ezk-update-precedence-list)
+
+
+
+
+
+;; what is it we're trying to do?
+
+;; we want to override the default lisp indent, but only in buffers containing a
+;; call to ezk-defkeymaps
+
+;; how to do it efficiently?
+;;
+;; restrict ezk-defkeymaps calls to the file defined at `ezk-keymap-path'
+;; this is not so nice
+;;
+;; scan all buffers loaded and look for the string "ezk-defkeymaps"
+;; this is not so efficient
+;;
+;; how else?
