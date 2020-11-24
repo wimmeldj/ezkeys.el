@@ -140,16 +140,12 @@ reflects the state of `ezk-mode-map-alist'."
   (cl-flet ((wipe-keymap (hook)
                          (setf (alist-get (ezk/minor-mode-sym hook) ezk-mode-map-alist)
                                (make-sparse-keymap))))
-    ;; GLOBAL is always defined, so it must be cleared
-    (wipe-keymap 'GLOBAL)
     (mapc (lambda (hook)
             (let* ((minor-mode-sym (ezk/minor-mode-sym hook)))
-              (if (assoc minor-mode-sym ezk-mode-map-alist)
-                  (wipe-keymap hook)
-                (ezk/define-minor-mode minor-mode-sym)
-                (add-to-list 'ezk-mode-map-alist (cons minor-mode-sym (make-sparse-keymap)))
-                ;; the hook triggers the ezk-specific minor mode
-                (add-hook hook minor-mode-sym))))
+              (ezk/define-minor-mode minor-mode-sym)
+              (add-to-list 'ezk-mode-map-alist (cons minor-mode-sym (make-sparse-keymap)))
+              ;; the hook triggers the ezk-specific minor mode
+              (add-hook hook minor-mode-sym)))
           (mapcar #'ezk/as-explicit-hook hooks))))
 
 
@@ -252,8 +248,9 @@ the cdr. MAP is not modified, but a new map returned."
          (ordered (copy-tree ezk-mode-map-alist)))
     (mapc (lambda (mode)
             (let ((map (alist-get mode ordered)))
-              (setq ordered (assoc-delete-all mode ordered))
-              (push (cons mode map) ordered)))
+              (when (assoc mode ordered)
+                (setq ordered (assoc-delete-all mode ordered))
+                (push (cons mode map) ordered))))
           (mapcar #'ezk/minor-mode-sym reversed))
     ordered))
 
@@ -320,12 +317,26 @@ has the lowest precedence.
   (declare (indent ezk/tl-indent))
   `(progn
      (let ((newmap (ezk/preprocess-map ',group-alist ',map)))
+       ;; wipe all previously defined maps to keep clean state
+       (mapc (lambda (memb)
+               (setf (cdr memb) (make-sparse-keymap)))
+             ezk-mode-map-alist)
+
        ;; creates modes and maps and store on `ezk-mode-map-alist'
        (ezk/create-modes-and-maps (ezk/extract-hooks newmap))
        ;; parse the keymap and store it in `ezk-mode-map-alist'
        (ezk/process-map newmap)
        ;; reorder `ezk-mode-map-alist' to respect PRECEDENCE-LIST
        (setq ezk-mode-map-alist (ezk/order-maps ',precedence-list))
+
+       ;; turn `_ezk/emacs-lisp-mode-hook-minor-mode' on if called in emacs-lisp
+       ;; buffer. Otherwise, won't turn on till `emacs-lisp-mode-hook' is execed
+       (when (eq major-mode 'emacs-lisp-mode)
+         (let ((ezk-emacs-mode-sym (ezk/minor-mode-sym 'emacs-lisp-mode)))
+           (if (assoc ezk-emacs-mode-sym ezk-mode-map-alist)
+               (apply ezk-emacs-mode-sym 1 nil)
+             (and (fboundp ezk-emacs-mode-sym)
+                  (apply ezk-emacs-mode-sym -1 nil)))))
        t)))
 
 ;; little indentation at top level
