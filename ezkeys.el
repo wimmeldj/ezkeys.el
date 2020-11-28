@@ -428,7 +428,7 @@ The only keymap file is at `ezk-keymap-path'."
 ;; implementing something like MMM-mode, where we could have context sensitive
 ;; indentaion /within/ files.
 (unless (file-exists-p ezk-keymap-path)
-  (f-touch ezk-keymap-path)
+  (with-temp-buffer (write-file ezk-keymap-path))
   (write-region "\
 ;;;; -*- mode: emacs-lisp; -*-
 ;;;; EZKEYS Keymap File"
