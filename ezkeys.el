@@ -5,10 +5,20 @@
 ;; Add the directory containing this file to your `load-path' and byte compile
 ;; optionally.
 ;;
+;; tell ezkeys before you load it where your keymap definition will be. This needs to be a file in
+;; your load path.
+;; 
+;; (setq ezk-keymap-path "some-file")
+;;
+;; Finally, load ezkeys
+;; 
 ;; (require 'ezkeys)
 ;;
-;; You can edit your keymap by editing the contents file at `ezk-keymap-path'
+;; You may want to manually execute this before you define a keymap (ie. C-x e) because it sets the
+;; proper indentation for a keymap definition in the file at `ezk-keymap-path'.
 ;;
+;; Define a keymap with `ezk-defkeymaps'
+;; 
 
 
 
@@ -434,7 +444,6 @@ The only keymap file is at `ezk-keymap-path'."
 ;;;; EZKEYS Keymap File"
               nil
               ezk-keymap-path))
-(load ezk-keymap-path t)                ;consider something else
 
 (add-hook 'find-file-hook #'ezk/on-keymap-file-load)
 (defun ezk/on-keymap-file-load ()
