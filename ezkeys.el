@@ -286,7 +286,12 @@ HOOK is any ordinary hook, like `c-mode-hook' or
 `lisp-mode-hook' (explicit). HOOK may also just be a symbol bound
 to a mode - e.g. c-mode - (implicit). In this case, it's assumed
 that the hook corresponding to `c-mode' has the standard name,
-i.e. `c-mode-hook'.
+i.e. `c-mode-hook'. The hook need not be a variable currently
+loaded when this macro is evaled. e.g. `python-mode-hook' may not
+be available when emacs starts, but it's still okay to reference
+`python-mode-hook' (explicit) or `python-mode' (implicit) when
+calling this macro. When the code defining `python-mode-hook' is
+eventually loaded, keymaps will work as expected.
 
 Additionally, a hook may be the special symbol GLOBAL. Binding a
 key to GLOBAL is similar to defining a key using
