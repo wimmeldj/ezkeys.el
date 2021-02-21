@@ -165,7 +165,7 @@ reflects the state of `ezk-mode-map-alist'."
 
 (defvar ezk/epoch
   (let ((i 0))
-    (lambda () (incf i))))
+    (lambda () (setq i (1+ i)))))
 
 (defvar ezk/seen '()
   "An alist where each member is of form
@@ -206,7 +206,7 @@ already been called to allocate the correct modes and maps."
   (cond ((ezk/terminal? form)           ;(f hook [hook]...)
          (ezk/define-keys (car form) (cdr form) keys epoch))
         (t
-         (do ((curr (car form) (car rest))
+         (cl-do ((curr (car form) (car rest))
               (newkeys '())
               (rest (cdr form) (cdr rest)))
              ((listp curr)
