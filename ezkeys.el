@@ -86,7 +86,7 @@ cannot be nil. ie.
     (when (listp form)
       (let ((def (car form))
             (hooks (cdr form)))
-        (and (or (functionp def)          ;function symbol or definition
+        (and (or (symbolp def)          ;function symbol or definition
                  (stringp def)            ;keyboard macro
                  (consp def))             ;a number of things
              (not (null hooks))           ;at least one hook
