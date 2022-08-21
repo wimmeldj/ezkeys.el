@@ -26,6 +26,10 @@
 ;;;; ===========================================================================
 ;;;;                                custom variables 
 
+(defgroup ezkeys nil
+  "EZ high-precedence declarative keymaps"
+  :group 'convenience)
+
 (defcustom ezk-keymap-path
   (concat user-emacs-directory "keymap")
   "The path where the keymap file should be stored."
