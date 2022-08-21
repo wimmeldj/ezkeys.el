@@ -39,14 +39,14 @@
 
 ;; (defvar _ezk/global-map (make-sparse-keymap))
 
-(define-minor-mode _ezk/minor
+(define-minor-mode ezk-minor-mode
   "ezk"
   :init-value t
   :lighter " ezk")
 
 (define-globalized-minor-mode _ezk/global
-  _ezk/minor
-  (lambda () (_ezk/minor 1)))                ;on in every buffer
+  ezk-minor-mode
+  (lambda () (ezk-minor-mode 1)))                 ;on in every buffer
 
 ;; GLOBAL always exists and will always be last
 (defvar ezk-mode-map-alist `((_ezk/global . ,(make-sparse-keymap))))
